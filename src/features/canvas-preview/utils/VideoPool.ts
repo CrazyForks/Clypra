@@ -144,6 +144,7 @@ export class VideoPool {
       entry.evictionTimer = window.setTimeout(() => {
         this.pool.delete(sourcePath);
         entry.video.src = ""; // Release video resources
+      }, 5000); // 5 second delay before eviction
     }
   }
 

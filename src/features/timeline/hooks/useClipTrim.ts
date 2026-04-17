@@ -8,6 +8,8 @@ import { CoordinateSystem } from "../utils/coordinateSystem";
 import { SnapSystem } from "../utils/snapSystem";
 import { clamp } from "../utils/math";
 
+const MIN_DURATION = 0.1; // Minimum clip duration in seconds
+
 interface UseClipTrimOptions {
   clipId: string;
   edge: "start" | "end";

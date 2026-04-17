@@ -61,6 +61,7 @@ export const Clip = memo(function Clip({ clip, isSelected, pxPerSec, onSelect }:
   const { x: baseX, width } = useMemo(
     () => ({
       x: coords.timeToPixels(clip.startTime),
+      width: coords.timeToPixels(clip.duration),
     }),
     [coords, clip.startTime, clip.duration],
   );
