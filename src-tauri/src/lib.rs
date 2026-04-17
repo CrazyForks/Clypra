@@ -496,6 +496,120 @@ async fn extract_filmstrip_frames(
     }
 }
 
+/// Get the frame cache directory path
+/// Creates the directory if it doesn't exist
+#[tauri::command]
+fn get_frame_cache_dir(app_handle: tauri::AppHandle) -> Result<String, String> {
+    let cache_dir = app_handle
+        .path_resolver()
+        .app_cache_dir()
+        .ok_or("Failed to get app cache dir")?
+        .join("frames");
+    
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("Failed to create cache dir: {}", e))?;
+    
+    Ok(cache_dir.to_string_lossy().to_string())
+}
+
+/// Check if a cached frame exists and return its path
+#[tauri::command]
+fn get_cached_frame_path(
+    app_handle: tauri::AppHandle,
+    video_path: String,
+    time_secs: f64,
+    width: u32,
+    height: u32,
+) -> Result<Option<String>, String> {
+    let cache_dir = get_frame_cache_dir(app_handle)?;
+    
+    // Create a unique hash for this frame request
+    let frame_key = format!("{}_{:.3}_{}x{}", video_path, time_secs, width, height);
+    let hash = format!("{:x}", md5::compute(&frame_key));
+    let frame_path = std::path::PathBuf::from(&cache_dir).join(format!("{}.png", hash));
+    
+    if frame_path.exists() {
+        Ok(Some(frame_path.to_string_lossy().to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Save a frame (from data URL) to persistent cache
+#[tauri::command]
+fn save_frame_to_cache(
+    app_handle: tauri::AppHandle,
+    video_path: String,
+    time_secs: f64,
+    width: u32,
+    height: u32,
+    data_url: String,
+) -> Result<String, String> {
+    let cache_dir = get_frame_cache_dir(app_handle)?;
+    
+    // Create a unique hash for this frame request
+    let frame_key = format!("{}_{:.3}_{}x{}", video_path, time_secs, width, height);
+    let hash = format!("{:x}", md5::compute(&frame_key));
+    let frame_path = std::path::PathBuf::from(&cache_dir).join(format!("{}.png", hash));
+    
+    // Parse data URL and save
+    if let Some(base64_data) = data_url.strip_prefix("data:image/png;base64,") {
+        let decoded = base64::decode(base64_data)
+            .map_err(|e| format!("Failed to decode base64: {}", e))?;
+        std::fs::write(&frame_path, decoded)
+            .map_err(|e| format!("Failed to write frame: {}", e))?;
+        Ok(frame_path.to_string_lossy().to_string())
+    } else {
+        Err("Invalid data URL format".into())
+    }
+}
+
+/// Read a cached frame and return as base64 data URL
+#[tauri::command]
+fn read_cached_frame(
+    app_handle: tauri::AppHandle,
+    video_path: String,
+    time_secs: f64,
+    width: u32,
+    height: u32,
+) -> Result<Option<String>, String> {
+    if let Some(path) = get_cached_frame_path(app_handle, video_path, time_secs, width, height)? {
+        let data = std::fs::read(&path)
+            .map_err(|e| format!("Failed to read cached frame: {}", e))?;
+        let base64_data = base64::encode(&data);
+        Ok(Some(format!("data:image/png;base64,{}", base64_data)))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Clear the entire frame cache
+#[tauri::command]
+fn clear_frame_cache(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let cache_dir = get_frame_cache_dir(app_handle)?;
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("Failed to recreate cache dir: {}", e))?;
+    Ok(())
+}
+
+/// Get cache size in MB
+#[tauri::command]
+fn get_frame_cache_size(app_handle: tauri::AppHandle) -> Result<f64, String> {
+    let cache_dir = get_frame_cache_dir(app_handle)?;
+    let mut total_size = 0u64;
+    
+    for entry in walkdir::WalkDir::new(&cache_dir).into_iter().flatten() {
+        if let Ok(metadata) = entry.metadata() {
+            if metadata.is_file() {
+                total_size += metadata.len();
+            }
+        }
+    }
+    
+    Ok(total_size as f64 / (1024.0 * 1024.0)) // Convert to MB
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -506,6 +620,12 @@ pub fn run() {
             audio_waveform_peaks,
             extract_frame_at_time,
             extract_filmstrip_frames,
+            get_frame_cache_dir,
+            get_cached_frame_path,
+            save_frame_to_cache,
+            read_cached_frame,
+            clear_frame_cache,
+            get_frame_cache_size,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

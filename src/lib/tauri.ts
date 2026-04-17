@@ -48,3 +48,67 @@ export async function extractFilmstripFrames(inputPath: string, frameCount: numb
     height,
   });
 }
+
+// --- Persistent Frame Cache Commands ---
+
+/**
+ * Get the frame cache directory path.
+ * Creates the directory if it doesn't exist.
+ */
+export async function getFrameCacheDir(): Promise<string> {
+  return invoke<string>("get_frame_cache_dir");
+}
+
+/**
+ * Check if a cached frame exists for given parameters.
+ * Returns the file path if it exists, null otherwise.
+ */
+export async function getCachedFramePath(videoPath: string, timeSecs: number, width: number, height: number): Promise<string | null> {
+  return invoke<string | null>("get_cached_frame_path", {
+    videoPath,
+    timeSecs,
+    width,
+    height,
+  });
+}
+
+/**
+ * Save a frame (from data URL) to persistent cache.
+ * Returns the path where the frame was saved.
+ */
+export async function saveFrameToCache(videoPath: string, timeSecs: number, width: number, height: number, dataUrl: string): Promise<string> {
+  return invoke<string>("save_frame_to_cache", {
+    videoPath,
+    timeSecs,
+    width,
+    height,
+    dataUrl,
+  });
+}
+
+/**
+ * Read a cached frame and return as base64 data URL.
+ * Returns the data URL if found, null otherwise.
+ */
+export async function readCachedFrame(videoPath: string, timeSecs: number, width: number, height: number): Promise<string | null> {
+  return invoke<string | null>("read_cached_frame", {
+    videoPath,
+    timeSecs,
+    width,
+    height,
+  });
+}
+
+/**
+ * Clear the entire frame cache.
+ */
+export async function clearFrameCache(): Promise<void> {
+  return invoke("clear_frame_cache");
+}
+
+/**
+ * Get the current frame cache size in megabytes.
+ */
+export async function getFrameCacheSize(): Promise<number> {
+  return invoke<number>("get_frame_cache_size");
+}
