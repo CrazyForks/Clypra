@@ -221,6 +221,28 @@ impl Drop for TempDirGuard {
     }
 }
 
+/// Get hardware acceleration arguments for FFmpeg based on platform
+/// Uses VideoToolbox on macOS, DXVA2/D3D11VA on Windows, VAAPI on Linux
+fn get_hwaccel_args() -> Vec<&'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        vec!["-hwaccel", "videotoolbox"]
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Try D3D11VA first (newer), fallback to DXVA2
+        vec!["-hwaccel", "d3d11va", "-hwaccel_output_format", "nv12"]
+    }
+    #[cfg(target_os = "linux")]
+    {
+        vec!["-hwaccel", "vaapi", "-vaapi_device", "/dev/dri/renderD128"]
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        vec![]
+    }
+}
+
 /// Check if FFmpeg is installed and available on PATH
 async fn check_ffmpeg_available() -> Result<(), String> {
     match Command::new("ffmpeg").arg("-version").output().await {
@@ -269,28 +291,39 @@ async fn extract_frame_at_time(
     
     let fast_seek_str = format!("{:.3}", fast_seek_time);
 
+    // Build FFmpeg args with hardware acceleration if available
+    let hwaccel_args = get_hwaccel_args();
+    let mut ffmpeg_args: Vec<&str> = vec![
+        "-hide_banner",
+        "-loglevel", "error",
+        // Fast input seek to keyframe near target (fast but less accurate)
+        "-ss", &fast_seek_str,
+    ];
+    
+    // Add hardware acceleration args before -i
+    ffmpeg_args.extend(hwaccel_args.iter().cloned());
+    
+    // Continue with input and output args
+    ffmpeg_args.extend([
+        "-i", &input_path,
+        // Precise output seek to exact frame (decodes from keyframe to target)
+        "-ss", precise_seek_secs,
+        // Output just one frame
+        "-vframes", "1",
+        // Scale to requested dimensions
+        "-vf", &format!("scale={}:force_original_aspect_ratio=decrease,pad={}:(ow-iw)/2:(oh-ih)/2:black", scale_str, scale_str),
+        // PNG for lossless quality
+        "-f", "image2",
+        "-vcodec", "png",
+        "-pix_fmt", "rgba",
+        "pipe:1", // Output to stdout
+    ]);
+
     // Spawn FFmpeg with 5-second timeout
     let ffmpeg_result = timeout(
         Duration::from_secs(5),
         Command::new("ffmpeg")
-            .args([
-                "-hide_banner",
-                "-loglevel", "error",
-                // Fast input seek to keyframe near target (fast but less accurate)
-                "-ss", &fast_seek_str,
-                "-i", &input_path,
-                // Precise output seek to exact frame (decodes from keyframe to target)
-                "-ss", precise_seek_secs,
-                // Output just one frame
-                "-vframes", "1",
-                // Scale to requested dimensions
-                "-vf", &format!("scale={}:force_original_aspect_ratio=decrease,pad={}:(ow-iw)/2:(oh-ih)/2:black", scale_str, scale_str),
-                // PNG for lossless quality
-                "-f", "image2",
-                "-vcodec", "png",
-                "-pix_fmt", "rgba",
-                "pipe:1", // Output to stdout
-            ])
+            .args(&ffmpeg_args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true)
@@ -400,21 +433,31 @@ async fn extract_filmstrip_frames(
     let scale_str = format!("{}:{}", width, height);
     let output_pattern = temp_dir.join("frame_%03d.png").to_string_lossy().to_string();
 
-    // Extract all frames in one FFmpeg call
+    // Extract all frames in one FFmpeg call with hardware acceleration
+    let hwaccel_args = get_hwaccel_args();
+    let mut ffmpeg_args: Vec<&str> = vec![
+        "-hide_banner",
+        "-loglevel", "error",
+    ];
+    
+    // Add hardware acceleration args before -i
+    ffmpeg_args.extend(hwaccel_args.iter().cloned());
+    
+    // Continue with input and filter args
+    ffmpeg_args.extend([
+        "-i", &input_path,
+        "-vf", &format!(
+            "select='{}',scale={}:force_original_aspect_ratio=decrease,pad={}:(ow-iw)/2:(oh-ih)/2:black,setpts=N/FRAME_RATE/TB",
+            select_expr, scale_str, scale_str
+        ),
+        "-vsync", "vfr",
+        &output_pattern,
+    ]);
+
     let ffmpeg_result = timeout(
         Duration::from_secs(30),
         Command::new("ffmpeg")
-            .args([
-                "-hide_banner",
-                "-loglevel", "error",
-                "-i", &input_path,
-                "-vf", &format!(
-                    "select='{}',scale={}:force_original_aspect_ratio=decrease,pad={}:(ow-iw)/2:(oh-ih)/2:black,setpts=N/FRAME_RATE/TB",
-                    select_expr, scale_str, scale_str
-                ),
-                "-vsync", "vfr",
-                &output_pattern,
-            ])
+            .args(&ffmpeg_args)
             .output(),
     )
     .await;
