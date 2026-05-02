@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { Film, RotateCcw, RotateCw, Upload, Home } from "lucide-react";
+import { Film, RotateCcw, RotateCw, Upload, Home, Settings } from "lucide-react";
 import { Button } from "../ui/Button";
 import { usePlayback } from "../../hooks/usePlayback";
 import { useProjectStore } from "../../store/projectStore";
+import { useUIStore } from "../../store/uiStore";
 
 interface TopBarProps {
   onExport?: () => void;
@@ -11,6 +12,7 @@ interface TopBarProps {
 export const TopBar: React.FC<TopBarProps> = ({ onExport }) => {
   const { currentTime, duration, formatTime } = usePlayback();
   const { project, updateProject, closeProject } = useProjectStore();
+  const { toggleSettingsModal } = useUIStore();
   const [isEditingName, setIsEditingName] = useState(false);
   const [projectName, setProjectName] = useState(project?.name || "");
 
@@ -48,6 +50,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onExport }) => {
         <Button variant="ghost" size="sm" icon={<RotateCcw className="w-4 h-4" />} title="Undo" />
         <Button variant="ghost" size="sm" icon={<RotateCw className="w-4 h-4" />} title="Redo" />
         <div className="w-px h-6 bg-border" />
+        <Button variant="ghost" size="sm" icon={<Settings className="w-4 h-4" />} onClick={toggleSettingsModal} title="Settings" />
         <Button variant="primary" size="sm" icon={<Upload className="w-4 h-4" />} onClick={onExport}>
           Export
         </Button>
