@@ -53,7 +53,8 @@ export const MediaTab: React.FC<MediaTabProps> = ({ onAddToTimeline }) => {
           // Import new asset
           if (type === "video" || type === "audio") {
             const metadata: VideoMetadata = await invoke("get_video_metadata", { path: filePath });
-            const posterFrame: string | undefined = type === "video" ? ((await invoke("extract_poster_frame", { path: filePath, time: 0.0 }).catch(() => undefined)) as string | undefined) : undefined;
+            // Use extract_poster_frame_command which extracts at 10% of duration (avoids black frames at 0s)
+            const posterFrame: string | undefined = type === "video" ? ((await invoke("extract_poster_frame_command", { videoPath: filePath, duration: metadata.duration, dpr: 1.0 }).catch(() => undefined)) as string | undefined) : undefined;
 
             const asset = {
               id: `asset-${Date.now()}-${Math.random()}`,

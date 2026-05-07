@@ -1,7 +1,7 @@
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizePathForTauriInvoke } from "../../../lib/tauri";
-import { getDensityForZoom, generateTimestampGrid, getIntervalForDensity } from "../../../lib/timelineUtils";
+import { sampleTimestampsForZoom, generateTimestampGrid } from "../../../lib/timelineUtils";
 import { cn } from "@/lib/utils";
 import { DensityLevel } from "../../../types";
 import type { Clip, MediaAsset, ThumbnailTile } from "../../../types";
@@ -29,32 +29,27 @@ export interface ClipFilmstripProps {
 /**
  * ClipFilmstrip renders a filmstrip of thumbnail tiles for a video clip.
  *
- * Architecture overview:
- * - **Density bucket system**: Zoom level maps to one of four extraction densities
- *   (Low/Medium/High/Ultra). Transitions between buckets are debounced 250ms to
- *   avoid excessive re-extraction during rapid zoom.
- * - **Timestamp grid**: Frames are requested by globally-aligned timestamps rather
- *   than frame counts, so the cache remains valid across zoom changes within a bucket.
- * - **Fallback chain**: Tiles are pre-populated with poster frames immediately.
- *   Real thumbnails stream in via a Tauri channel and replace poster tiles as they
- *   arrive. The backend applies Ultra → High → Medium → Low → Poster fallback.
- * - **Streaming channel**: `get_thumbnails_for_timestamps` returns cached hits
- *   synchronously (< 5ms) and streams extracted frames as they complete. The channel
- *   stays open after the command returns; cleanup sets `cancelled` to drop stale msgs.
+ * CapCut-style architecture:
+ * - **Single density extraction**: Extracts once at High density (every 0.2s)
+ *   using the native ffmpeg-next decoder
+ * - **Zoom-based sampling**: Displays a subset of frames based on zoom level
+ *   without re-extraction. Zoom out shows fewer frames (every Nth), zoom in shows more
+ * - **Streaming channel**: `decode_frames_streaming` returns cached hits
+ *   synchronously (< 5ms) and streams extracted frames as they complete
  */
 export function ClipFilmstrip({ clip, mediaAsset, clipWidthPx: _clipWidthPx, pixelsPerSecond, stripHeightPx = 32, className }: ClipFilmstripProps) {
   /** Map from timestamp → tile (poster or real thumbnail). */
   const [tiles, setTiles] = useState<Map<number, ThumbnailTile>>(new Map());
-  /** Active density bucket, updated after 250ms debounce at bucket boundaries. */
-  const [currentDensity, setCurrentDensity] = useState<DensityLevel>(DensityLevel.Medium);
-  /** Timer ref for 250ms debounce when zoom crosses a density bucket boundary. */
-  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
-   * Globally-aligned timestamp grid for the current clip range and density.
-   * Shared between the grid-generation effect and the channel effect so the
-   * channel effect re-runs whenever the grid changes.
+   * Base timestamp grid (5s interval) - extracted once, sampled based on zoom
    */
-  const [timestamps, setTimestamps] = useState<number[]>([]);
+  const [baseTimestamps, setBaseTimestamps] = useState<number[]>([]);
+  /**
+   * Display timestamps - sampled from base grid based on zoom
+   */
+  const displayTimestamps = useMemo(() => {
+    return sampleTimestampsForZoom(baseTimestamps, pixelsPerSecond);
+  }, [baseTimestamps, pixelsPerSecond]);
 
   const isVideoSource = useMemo(() => {
     const path = mediaAsset.path ?? "";
@@ -71,126 +66,106 @@ export function ClipFilmstrip({ clip, mediaAsset, clipWidthPx: _clipWidthPx, pix
   const resolutionTier = typeof window !== "undefined" && window.devicePixelRatio >= 1.5 ? "2x" : "1x";
   const [thumbW, thumbH] = resolutionTier === "2x" ? [160, 120] : [80, 60];
 
-  // ── Density bucket transition ──────────────────────────────────────────────
-  // Debounce 250ms at bucket boundaries so rapid zoom doesn't trigger excessive
-  // re-extraction. Zoom within the same bucket is instant (no debounce).
+  // ── High-density grid generation ─────────────────────────────────────────────
+  // Generate timestamp grid once at High density (every 0.2s)
+  // This grid is used for extraction, then sampled based on zoom for display
   useEffect(() => {
-    const targetDensity = getDensityForZoom(pixelsPerSecond);
+    console.log("[ClipFilmstrip] High-density grid gen check:", {
+      hasDuration: !!mediaAsset.duration,
+      duration: mediaAsset.duration,
+      isVideoSource,
+      trimIn: clip.trimIn,
+      trimOut: clip.trimOut,
+    });
 
-    if (targetDensity === currentDensity) {
-      // Still in the same bucket — cancel any pending transition and do nothing.
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-        debounceTimerRef.current = null;
-      }
-      return;
-    }
-
-    // Crossed a bucket boundary — reset the debounce window.
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-    }
-
-    debounceTimerRef.current = setTimeout(() => {
-      setCurrentDensity(targetDensity);
-      debounceTimerRef.current = null;
-    }, 250);
-
-    return () => {
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-        debounceTimerRef.current = null;
-      }
-    };
-  }, [pixelsPerSecond, currentDensity]);
-
-  // ── Timestamp grid generation ──────────────────────────────────────────────
-  // Regenerate the globally-aligned grid whenever clip range, density, or video
-  // duration changes. Uses multiplication-based accumulation (not float addition)
-  // to avoid drift at Ultra density (0.05s interval).
-  // Pre-populates tiles with poster frames so the filmstrip is never blank.
-  useEffect(() => {
     if (!mediaAsset.duration || !isVideoSource) {
-      setTimestamps([]);
+      console.log("[ClipFilmstrip] SKIPPING grid gen - no duration or not video");
+      setBaseTimestamps([]);
       setTiles(new Map());
       return;
     }
 
-    const interval = getIntervalForDensity(currentDensity);
-    const grid = generateTimestampGrid(clip.trimIn, clip.trimOut, interval, mediaAsset.duration);
-    setTimestamps(grid);
+    // Always generate at Low density (5s interval) for instant extraction
+    const BASE_INTERVAL = 5.0;
+    const grid = generateTimestampGrid(clip.trimIn, clip.trimOut, BASE_INTERVAL, mediaAsset.duration);
+    console.log(`[ClipFilmstrip] Generated ${grid.length} base timestamps (interval=${BASE_INTERVAL}s)`);
+    setBaseTimestamps(grid);
 
     // Initialize tiles with poster frames so the filmstrip shows something immediately
-    // while real thumbnails are being extracted in the background.
     if (mediaAsset.posterFrame) {
-      const posterSrc = convertFileSrc(mediaAsset.posterFrame);
+      const posterSrc = mediaAsset.posterFrame.startsWith("data:") ? mediaAsset.posterFrame : convertFileSrc(mediaAsset.posterFrame);
       const initialTiles = new Map<number, ThumbnailTile>(grid.map((time) => [time, { time, path: posterSrc, density: DensityLevel.Low }]));
       setTiles(initialTiles);
     } else {
       setTiles(new Map());
     }
-  }, [clip.trimIn, clip.trimOut, currentDensity, mediaAsset.duration, mediaAsset.posterFrame, isVideoSource]);
+  }, [clip.trimIn, clip.trimOut, mediaAsset.duration, mediaAsset.posterFrame, isVideoSource]);
 
   // ── Streaming thumbnail channel ────────────────────────────────────────────
-  // Creates a Tauri channel and calls get_thumbnails_for_timestamps. The backend
-  // sends cached hits immediately (< 5ms) then streams extracted frames as they
-  // complete. The channel stays open after the command returns — cleanup sets
-  // `cancelled` so stale messages from a previous density/clip are ignored.
+  // Extract thumbnails once at High density using native decoder
   useEffect(() => {
-    if (!isVideoSource || !mediaAsset.path || !mediaAsset.duration || timestamps.length === 0) {
+    if (!isVideoSource || !mediaAsset.path || !mediaAsset.duration || baseTimestamps.length === 0) {
       return;
     }
 
     let cancelled = false;
     const videoPath = normalizePathForTauriInvoke(mediaAsset.path);
-
-    // One ThumbnailTile message per frame, in completion order (not time order).
-    // The render step sorts by time before displaying.
     const channel = new Channel<ThumbnailTile>();
+    let tilesReceived = 0;
+
     channel.onmessage = (tile) => {
+      tilesReceived++;
+      if (tilesReceived <= 3 || tilesReceived % 20 === 0) {
+        console.log(`[ClipFilmstrip] Tile #${tilesReceived} received: time=${tile.time.toFixed(2)}s`);
+      }
       if (cancelled) return;
       setTiles((prev) => {
         const next = new Map(prev);
-        // Convert the raw filesystem path to an asset-protocol URL the browser can load.
-        next.set(tile.time, { ...tile, path: convertFileSrc(tile.path) });
+        const isDataUri = tile.path.startsWith("data:");
+        const imgSrc = isDataUri ? tile.path : convertFileSrc(tile.path);
+        next.set(tile.time, { ...tile, path: imgSrc });
         return next;
       });
     };
 
-    invoke("get_thumbnails_for_timestamps", {
+    console.log(`[ClipFilmstrip] Requesting ${baseTimestamps.length} frames at Low density via decode_frames_streaming`);
+
+    invoke("decode_frames_streaming", {
       videoPath,
-      timestamps,
-      density: currentDensity,
+      timestamps: baseTimestamps,
+      density: DensityLevel.Low,
       width: thumbW,
       height: thumbH,
       duration: mediaAsset.duration,
       onTile: channel,
-    }).catch((err) => {
-      if (cancelled) return;
-      console.error("[ClipFilmstrip] get_thumbnails_for_timestamps failed:", err);
-    });
+    })
+      .then(() => {
+        console.log("[ClipFilmstrip] decode_frames_streaming completed");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("[ClipFilmstrip] decode_frames_streaming failed:", err);
+      });
 
     return () => {
       cancelled = true;
     };
-  }, [isVideoSource, mediaAsset.path, mediaAsset.duration, timestamps, currentDensity, thumbW, thumbH]);
+  }, [isVideoSource, mediaAsset.path, mediaAsset.duration, baseTimestamps, thumbW, thumbH]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  const interval = getIntervalForDensity(currentDensity);
-  // tileWidth = pixelsPerSecond × interval
-  // Example: Medium density (1s) at 100px/s → 100px wide tiles
-  const tileWidth = pixelsPerSecond * interval;
+  // Fixed tile width for consistent appearance (5s interval at 10px/s = 50px)
+  const tileWidth = 50;
 
-  // Sort tiles by time — the channel delivers in completion order, not time order.
-  const sortedTiles = Array.from(tiles.values()).sort((a, b) => a.time - b.time);
+  // Filter tiles to only show those in the display timestamps (sampled from high-density grid)
+  const displayTiles = displayTimestamps.map((time) => tiles.get(time)).filter((tile): tile is ThumbnailTile => tile !== undefined);
 
   const poster = mediaAsset.posterFrame;
 
   // Video source with tiles: render the timestamp-based filmstrip.
-  if (isVideoSource && sortedTiles.length > 0) {
+  if (isVideoSource && displayTiles.length > 0) {
     return (
       <div data-testid="clip-filmstrip" className={cn("w-full overflow-hidden rounded-[2px] border border-black/20 bg-[#0c2730]/40", className)} style={{ height: stripHeightPx, display: "flex", overflow: "hidden" }}>
-        {sortedTiles.map((tile) => (
+        {displayTiles.map((tile) => (
           <img
             key={tile.time}
             src={tile.path}

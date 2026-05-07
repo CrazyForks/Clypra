@@ -713,7 +713,7 @@ async fn clear_thumbnail_cache(video_path: String) {
 
 /// Extract poster frame at 10% mark of clip duration
 /// 
-/// Requirements: 1.1, 1.2, 1.4
+/// Extract poster frame using native decoder directly (bypasses queue system)
 /// Returns base64-encoded WebP data URL for immediate display
 #[tauri::command]
 async fn extract_poster_frame_command(
@@ -721,6 +721,9 @@ async fn extract_poster_frame_command(
     duration: f64,
     dpr: f64,
 ) -> Result<String, String> {
+    use thumbnail_engine::decoder::get_decoder;
+    use image::codecs::webp::WebPEncoder;
+    
     // Calculate poster frame time (10% of duration, or 0.5s for short clips)
     let poster_time = if duration < 1.0 {
         0.5
@@ -728,22 +731,25 @@ async fn extract_poster_frame_command(
         duration * 0.1
     };
     
-    // Extract frame using existing thumbnail system
-    let poster_path = request_thumbnail(
-        &video_path,
-        poster_time,
-        DensityLevel::Medium,
-        Priority::Critical,
-        160,
-        90,
-        dpr,
-    ).await?;
+    // Use native decoder directly (no queue, no cancellation)
+    let decoder_arc = get_decoder(&video_path).await?;
+    let rgba_bytes = {
+        let mut decoder = decoder_arc.lock().await;
+        let out_w = if dpr >= 1.5 { 320 } else { 160 };
+        let out_h = if dpr >= 1.5 { 180 } else { 90 };
+        decoder.decode_frame(poster_time, out_w, out_h)?
+    };
     
-    // Read the cached frame and convert to data URL
-    let data = std::fs::read(&poster_path)
-        .map_err(|e| format!("Failed to read poster frame: {}", e))?;
+    // Encode RGBA to WebP
+    let out_w = if dpr >= 1.5 { 320 } else { 160 };
+    let out_h = if dpr >= 1.5 { 180 } else { 90 };
+    let mut webp_data = Vec::new();
+    let encoder = WebPEncoder::new_lossless(&mut webp_data);
+    encoder.encode(&rgba_bytes, out_w, out_h, image::ExtendedColorType::Rgba8)
+        .map_err(|e| format!("WebP encode failed: {}", e))?;
     
-    let base64_data = BASE64.encode(&data);
+    // Convert to base64 data URL
+    let base64_data = BASE64.encode(&webp_data);
     Ok(format!("data:image/webp;base64,{}", base64_data))
 }
 
@@ -923,7 +929,7 @@ async fn get_thumbnails_for_timestamps(
 /// The cascade happens in Rust (not frontend):
 /// 1. Extract Low density first (5s intervals)
 /// 2. If Low succeeds, extract Medium density (1s intervals)
-/// 3. If Medium succeeds, extract High density (0.2s intervals)
+/// 3. High/Ultra density skipped in preload - native decoder handles on-demand
 /// 4. Errors are logged but don't block the cascade
 /// 
 /// All extractions use Priority::Normal (background priority).
@@ -971,54 +977,285 @@ async fn preload_video_thumbnails(
                         low_elapsed_ms
                     );
                 }
+                
+                // NOTE: Skipping Medium/High density in preload - will use native decoder on-demand
+                // This is much faster with the ffmpeg-next decoder
+                eprintln!("[preload_video_thumbnails] Skipping Medium/High density - using on-demand native decoder");
             }
             Err(e) => {
-                let low_elapsed_ms = low_start.elapsed().as_millis() as f64;
-                eprintln!(
-                    "[preload_video_thumbnails] Low density failed after {:.1}ms for {}: {}",
-                    low_elapsed_ms, video_path, e
-                );
-                return; // Return early if Low fails
-            }
-        }
-        
-        // Extract Medium density after Low completes
-        eprintln!("[preload_video_thumbnails] Starting Medium density extraction for {}", video_path);
-        match thumbnail_engine::preload_density_level(
-            &video_path,
-            DensityLevel::Medium,
-            duration,
-            dpr,
-        ).await {
-            Ok(_) => {
-                eprintln!("[preload_video_thumbnails] Medium density complete for {}", video_path);
-            }
-            Err(e) => {
-                eprintln!("[preload_video_thumbnails] Medium density failed for {}: {}", video_path, e);
-                return; // Return early if Medium fails
-            }
-        }
-        
-        // Extract High density after Medium completes
-        eprintln!("[preload_video_thumbnails] Starting High density extraction for {}", video_path);
-        match thumbnail_engine::preload_density_level(
-            &video_path,
-            DensityLevel::High,
-            duration,
-            dpr,
-        ).await {
-            Ok(_) => {
-                eprintln!("[preload_video_thumbnails] High density complete for {}", video_path);
-            }
-            Err(e) => {
-                eprintln!("[preload_video_thumbnails] High density failed for {}: {}", video_path, e);
-                // Don't return - this is the last level
+                eprintln!("[preload_video_thumbnails] Low density failed for {}: {}", video_path, e);
             }
         }
     });
     
     // Return immediately - cascade happens in background
     Ok(())
+}
+
+// ─── Native FFmpeg Decoder Commands ─────────────────────────────────────────
+// Fast path for thumbnail extraction using ffmpeg-next (no sidecar overhead)
+
+use thumbnail_engine::{ResolutionTier, GLOBAL_CACHE};
+
+/// Encode RGBA bytes to WebP and save to cache
+async fn save_rgba_as_webp(
+    rgba_bytes: &[u8],
+    width: u32,
+    height: u32,
+    cache_path: &std::path::Path,
+) -> Result<(), String> {
+    use image::codecs::webp::WebPEncoder;
+    let start = std::time::Instant::now();
+    
+    // Encode RGBA to WebP
+    let mut webp_data = Vec::new();
+    let encoder = WebPEncoder::new_lossless(&mut webp_data);
+    encoder.encode(rgba_bytes, width, height, image::ExtendedColorType::Rgba8)
+        .map_err(|e| format!("WebP encoding failed: {}", e))?;
+    let encode_time = start.elapsed();
+    
+    // Ensure parent directory exists
+    if let Some(parent) = cache_path.parent() {
+        tokio::fs::create_dir_all(parent).await
+            .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+    }
+    
+    // Write to file
+    tokio::fs::write(cache_path, &webp_data).await
+        .map_err(|e| format!("Failed to write WebP file: {}", e))?;
+    
+    eprintln!("[save_rgba_as_webp] Encoded {}x{} → {} bytes in {:?} (file: {:?})",
+              width, height, webp_data.len(), encode_time, cache_path.file_name().unwrap_or_default());
+    
+    Ok(())
+}
+
+/// Extract a single frame using the native decoder (fast path)
+/// Returns base64-encoded WebP data URL
+#[tauri::command]
+async fn decode_frame(
+    video_path: String,
+    time_secs: f64,
+    width: u32,
+    height: u32,
+) -> Result<String, String> {
+    use image::codecs::webp::WebPEncoder;
+    
+    // Get or create decoder (reused across calls)
+    let decoder = get_decoder(&video_path).await?;
+    
+    // Decode frame (3-15ms for subsequent frames)
+    let rgba_bytes = {
+        let mut decoder_guard = decoder.lock().await;
+        decoder_guard.decode_frame(time_secs, width, height)?
+    };
+    
+    // Encode to WebP
+    let mut webp_data = Vec::new();
+    let encoder = WebPEncoder::new_lossless(&mut webp_data);
+    encoder.encode(&rgba_bytes, width, height, image::ExtendedColorType::Rgba8)
+        .map_err(|e| format!("WebP encoding failed: {}", e))?;
+    
+    // Return as base64 data URL
+    let base64_data = BASE64.encode(&webp_data);
+    Ok(format!("data:image/webp;base64,{}", base64_data))
+}
+
+/// Extract multiple frames using the native decoder with streaming
+/// Same architecture as get_thumbnails_for_timestamps but uses native decoder
+#[tauri::command]
+async fn decode_frames_streaming(
+    video_path: String,
+    timestamps: Vec<f64>,
+    density: DensityLevel,
+    width: u32,
+    height: u32,
+    duration: f64,
+    on_tile: tauri::ipc::Channel<ThumbnailTile>,
+) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    let video_id = format!("{:x}", md5::compute(&video_path));
+    let resolution_tier = if width >= 160 { ResolutionTier::Tier2x } else { ResolutionTier::Tier1x };
+    
+    eprintln!("[decode_frames_streaming] START video_id={} timestamps={} density={:?} size={}x{}", 
+              video_id, timestamps.len(), density, width, height);
+    
+    // Get or create video cache entry for cache checks
+    let video_cache = thumbnail_engine::get_video_cache(&video_path, duration).await;
+    
+    // Cancel stale timestamps from previous requests
+    thumbnail_engine::ACTIVE_TRACKER.cancel_stale_timestamps(&video_id, &timestamps);
+    
+    // Check cache for existing frames
+    let mut missing_times = Vec::new();
+    let mut cache_hits = 0u32;
+    
+    for &time in &timestamps {
+        if let Some((path, found_density)) = video_cache.get_frame_path(time, density) {
+            cache_hits += 1;
+            let path_str = path.to_string_lossy().to_string();
+            if cache_hits <= 3 {
+                eprintln!("[decode_frames_streaming] Initial cache hit #{}: time={:.2}s, path={}", 
+                          cache_hits, time, &path_str[..80.min(path_str.len())]);
+            }
+            // Send cached tile immediately
+            let _ = on_tile.send(ThumbnailTile {
+                time,
+                path: path_str,
+                density: found_density,
+            });
+        } else {
+            missing_times.push(time);
+        }
+    }
+    
+    eprintln!("[decode_frames_streaming] Cache check: hits={} missing={}", cache_hits, missing_times.len());
+    
+    // Register this request as active
+    thumbnail_engine::ACTIVE_TRACKER.register_request(&video_id, &timestamps);
+    
+    // If all cached, return early
+    if missing_times.is_empty() {
+        eprintln!("[decode_frames_streaming] All cached, returning early ({:?})", start.elapsed());
+        return Ok(());
+    }
+    
+    // Spawn background task for missing timestamps using native decoder
+    tokio::spawn(async move {
+        let bg_start = std::time::Instant::now();
+        eprintln!("[decode_frames_streaming] BG task starting, missing={}", missing_times.len());
+        
+        // Get or create decoder for this video
+        let decoder = match get_decoder(&video_path).await {
+            Ok(d) => {
+                eprintln!("[decode_frames_streaming] Decoder acquired ({:?})", bg_start.elapsed());
+                d
+            }
+            Err(e) => {
+                eprintln!("[decode_frames_streaming] Failed to get decoder: {}", e);
+                return;
+            }
+        };
+        
+        // Extract missing frames in batches for better responsiveness
+        let mut frames_decoded = 0u32;
+        let mut frames_failed = 0u32;
+        const BATCH_SIZE: usize = 10; // Process 10 frames, then yield
+        
+        for (batch_idx, time) in missing_times.iter().enumerate() {
+            let frame_start = std::time::Instant::now();
+            
+            // Check if request is still active
+            let timestamp_key = (*time * 1000.0).round() as u64;
+            if let Some(entry) = thumbnail_engine::ACTIVE_TRACKER.active_requests.get(&video_id) {
+                if !entry.value().contains(&timestamp_key) {
+                    continue; // Skip cancelled timestamps
+                }
+            }
+            
+            // Get cache path
+            let cache_path = match GLOBAL_CACHE.frame_path(&video_id, density, *time, resolution_tier).await {
+                Some(p) => p,
+                None => {
+                    eprintln!("[decode_frames_streaming] Cache not initialized");
+                    continue;
+                }
+            };
+            
+            // Skip if already cached (race condition)
+            if cache_path.exists() {
+                let path_str = cache_path.to_string_lossy().to_string();
+                eprintln!("[decode_frames_streaming] Cache hit, sending: time={:.2}s, path={}", *time, &path_str[..80.min(path_str.len())]);
+                let _ = on_tile.send(ThumbnailTile {
+                    time: *time,
+                    path: path_str,
+                    density,
+                });
+                continue;
+            }
+            
+            // Decode frame using native decoder
+            let rgba_bytes = match decoder.lock().await.decode_frame(*time, width, height) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    frames_failed += 1;
+                    eprintln!("[decode_frames_streaming] Decode failed at {}s: {}", *time, e);
+                    continue;
+                }
+            };
+            
+            // Save to cache as WebP
+            if let Err(e) = save_rgba_as_webp(&rgba_bytes, width, height, &cache_path).await {
+                frames_failed += 1;
+                eprintln!("[decode_frames_streaming] Failed to save frame: {}", e);
+                continue;
+            }
+            
+            frames_decoded += 1;
+            
+            // Yield every BATCH_SIZE frames to keep UI responsive
+            if batch_idx % BATCH_SIZE == 0 && batch_idx > 0 {
+                tokio::task::yield_now().await;
+            }
+            
+            // Update in-memory cache
+            if let Some(vc) = GLOBAL_CACHE.get_video(&video_path) {
+                if let Some(level_cache) = vc.levels.get(&density) {
+                    let cached_frame = thumbnail_engine::CachedFrame::new(*time, cache_path.clone());
+                    level_cache.insert(*time, cached_frame);
+                    // Update total_size
+                    if let Ok(metadata) = std::fs::metadata(&cache_path) {
+                        GLOBAL_CACHE.total_size.fetch_add(metadata.len(), std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            }
+            
+            // Evict if needed
+            GLOBAL_CACHE.evict_if_needed().await;
+            
+            // Stream result to frontend
+            let path_str = cache_path.to_string_lossy().to_string();
+            eprintln!("[decode_frames_streaming] Sending tile: time={:.2}s, path_len={}, path_start={}", 
+                      *time, path_str.len(), &path_str[..50.min(path_str.len())]);
+            let _ = on_tile.send(ThumbnailTile {
+                time: *time,
+                path: path_str,
+                density,
+            });
+            
+            // Log first few frames and then every 10th
+            if frames_decoded <= 3 || frames_decoded % 10 == 0 {
+                eprintln!("[decode_frames_streaming] Frame {} at {:.2}s decoded+saved in {:?}", 
+                          frames_decoded, *time, frame_start.elapsed());
+            }
+        }
+        
+        eprintln!("[decode_frames_streaming] BG task complete: decoded={} failed={} total_time={:?}",
+                  frames_decoded, frames_failed, bg_start.elapsed());
+    });
+    
+    Ok(())
+}
+
+/// Release the native decoder for a video to free memory
+/// Call this when a clip is removed from the project
+#[tauri::command]
+fn release_video_decoder(video_path: String) {
+    release_decoder(&video_path);
+}
+
+/// Get video metadata using the native decoder (fast, no sidecar)
+#[tauri::command]
+async fn get_video_metadata_fast(video_path: String) -> Result<serde_json::Value, String> {
+    let decoder = get_decoder(&video_path).await?;
+    let guard = decoder.lock().await;
+    
+    Ok(serde_json::json!({
+        "duration": guard.duration,
+        "width": guard.width,
+        "height": guard.height,
+        "path": video_path,
+    }))
 }
 
 #[cfg(test)]

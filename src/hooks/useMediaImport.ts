@@ -31,10 +31,14 @@ export const useMediaImport = () => {
           const type = getMediaType(path);
 
           if (type === "video" || type === "audio") {
+            console.log(`[useMediaImport] Getting metadata for: ${path}`);
             const metadata: VideoMetadata = await invoke("get_video_metadata", { path });
+            console.log(`[useMediaImport] Metadata received:`, metadata);
+
+            // Use extract_poster_frame_command which extracts at 10% of duration (avoids black frames at 0s)
             const posterFrame: string | undefined =
               type === "video"
-                ? ((await invoke("extract_poster_frame", { path, time: 0.0 }).catch((err) => {
+                ? ((await invoke("extract_poster_frame_command", { videoPath: path, duration: metadata.duration, dpr: 1.0 }).catch((err) => {
                     console.error("Failed to extract poster frame:", err);
                     return undefined;
                   })) as string | undefined)
@@ -51,6 +55,7 @@ export const useMediaImport = () => {
               posterFrame,
               size: metadata.size,
             };
+            console.log(`[useMediaImport] Adding asset with duration=${asset.duration}`);
             addMediaAsset(asset);
           } else {
             // For images, use the convertFileSrc to create a proper asset URL

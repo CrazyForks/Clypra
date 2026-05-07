@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
 
 /**
  * Tauri `invoke` / FFmpeg need a native filesystem path. The webview may use
@@ -62,14 +62,7 @@ export async function extractFrameAtTime(inputPath: string, timeSecs: number, wi
  * More efficient than multiple individual frame extractions.
  * Returns an array of base64-encoded PNG data URLs.
  */
-export async function extractFilmstripFrames(
-  inputPath: string,
-  frameCount: number,
-  width: number,
-  height: number,
-  timeStartSec?: number | null,
-  timeEndSec?: number | null,
-): Promise<string[]> {
+export async function extractFilmstripFrames(inputPath: string, frameCount: number, width: number, height: number, timeStartSec?: number | null, timeEndSec?: number | null): Promise<string[]> {
   const fsPath = normalizePathForTauriInvoke(inputPath);
   return invoke<string[]>("extract_filmstrip_frames", {
     inputPath: fsPath,
@@ -143,4 +136,66 @@ export async function clearFrameCache(): Promise<void> {
  */
 export async function getFrameCacheSize(): Promise<number> {
   return invoke<number>("get_frame_cache_size");
+}
+
+// ─── Native FFmpeg Decoder Commands (Fast Path) ───────────────────────────
+
+import type { DensityLevel, ThumbnailTile } from "../types";
+
+/**
+ * Extract a single frame using the native decoder (fast path).
+ * ~20-50ms first frame, ~3-15ms subsequent frames.
+ * Returns base64-encoded WebP data URL.
+ */
+export async function decodeFrame(videoPath: string, timeSecs: number, width: number, height: number): Promise<string> {
+  return invoke<string>("decode_frame", {
+    videoPath: normalizePathForTauriInvoke(videoPath),
+    timeSecs,
+    width,
+    height,
+  });
+}
+
+/**
+ * Extract multiple frames using the native decoder with streaming.
+ * Same architecture as get_thumbnails_for_timestamps but uses native decoder
+ * instead of sidecar FFmpeg. Much faster for batch extractions.
+ */
+export async function decodeFramesStreaming(videoPath: string, timestamps: number[], density: DensityLevel, width: number, height: number, duration: number, onTile: (tile: ThumbnailTile) => void): Promise<void> {
+  const channel = new Channel<ThumbnailTile>();
+  channel.onmessage = onTile;
+
+  return invoke("decode_frames_streaming", {
+    videoPath: normalizePathForTauriInvoke(videoPath),
+    timestamps,
+    density,
+    width,
+    height,
+    duration,
+    onTile: channel,
+  });
+}
+
+/**
+ * Release the native decoder for a video to free memory.
+ * Call this when a clip is removed from the project.
+ */
+export function releaseVideoDecoder(videoPath: string): void {
+  invoke("release_video_decoder", {
+    videoPath: normalizePathForTauriInvoke(videoPath),
+  });
+}
+
+/**
+ * Get video metadata using the native decoder (fast, no sidecar).
+ */
+export async function getVideoMetadataFast(videoPath: string): Promise<{
+  duration: number;
+  width: number;
+  height: number;
+  path: string;
+}> {
+  return invoke("get_video_metadata_fast", {
+    videoPath: normalizePathForTauriInvoke(videoPath),
+  });
 }

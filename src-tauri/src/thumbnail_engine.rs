@@ -163,6 +163,7 @@ impl CacheKey {
 
 /// Thumbnail density levels (time intervals)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DensityLevel {
     /// Low density: one frame every 5 seconds (zoomed out)
     Low = 0,

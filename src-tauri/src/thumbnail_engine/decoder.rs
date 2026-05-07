@@ -101,6 +101,8 @@ impl VideoDecoder {
         let w = decoder.width();
         let h = decoder.height();
 
+        eprintln!("[VideoDecoder::open] Opened {}x{} decoder", w, h);
+
         Ok((decoder, w, h))
     }
 
@@ -111,6 +113,8 @@ impl VideoDecoder {
         out_width: u32,
         out_height: u32,
     ) -> Result<Vec<u8>, String> {
+        let start = std::time::Instant::now();
+        
         // Clamp to video bounds
         let ts = timestamp_secs.max(0.0).min(self.duration - 0.001);
 
@@ -136,6 +140,7 @@ impl VideoDecoder {
         // Decode forward until we reach or pass the target timestamp
         let mut best_frame = ffmpeg::frame::Video::empty();
         let mut found = false;
+        let mut packets_decoded = 0u32;
 
         'decode: for (stream, packet) in self.input_ctx.packets() {
             if stream.index() != self.stream_index {
@@ -145,6 +150,7 @@ impl VideoDecoder {
             if self.decoder.send_packet(&packet).is_err() {
                 continue;
             }
+            packets_decoded += 1;
 
             let mut frame = ffmpeg::frame::Video::empty();
             while self.decoder.receive_frame(&mut frame).is_ok() {
@@ -170,11 +176,19 @@ impl VideoDecoder {
             return Err(format!("No frame found at {}s", ts));
         }
 
+        let seek_decode_time = start.elapsed();
+
         // Handle hardware frames (copy back from GPU to CPU if needed)
         let cpu_frame = self.to_cpu_frame(best_frame)?;
 
         // Scale to output dimensions and convert to RGBA
-        self.scale_to_rgba(&cpu_frame, out_width, out_height)
+        let rgba = self.scale_to_rgba(&cpu_frame, out_width, out_height)?;
+        
+        let total_time = start.elapsed();
+        eprintln!("[decode_frame] @{:.3}s: seek+decode={:?} total={:?} ({} packets)", 
+                  ts, seek_decode_time, total_time, packets_decoded);
+        
+        Ok(rgba)
     }
 
     fn to_cpu_frame(
@@ -224,8 +238,21 @@ impl VideoDecoder {
         let mut out = ffmpeg::frame::Video::empty();
         scaler.run(frame, &mut out).map_err(|e| e.to_string())?;
 
-        // plane 0 = RGBA bytes
-        Ok(out.data(0).to_vec())
+        // FFmpeg frame data may have stride padding - copy tightly packed RGBA
+        let stride = out.stride(0) as usize;
+        let width = out.width() as usize;
+        let height = out.height() as usize;
+        let src_data = out.data(0);
+        
+        // Copy row by row to handle stride
+        let mut rgba = Vec::with_capacity(width * height * 4);
+        for y in 0..height {
+            let row_start = y * stride;
+            let row_pixels = &src_data[row_start..row_start + (width * 4)];
+            rgba.extend_from_slice(row_pixels);
+        }
+        
+        Ok(rgba)
     }
 }
 
@@ -238,15 +265,21 @@ pub static DECODER_POOL: Lazy<DashMap<String, Arc<Mutex<VideoDecoder>>>> =
 
 pub async fn get_decoder(path: &str) -> Result<Arc<Mutex<VideoDecoder>>, String> {
     if let Some(existing) = DECODER_POOL.get(path) {
+        eprintln!("[get_decoder] Pool HIT for {}", path);
         return Ok(existing.clone());
     }
 
     // Create new decoder — this is the only slow path (~20-50ms once per video)
+    let start = std::time::Instant::now();
+    eprintln!("[get_decoder] Pool MISS - creating new decoder for {}", path);
+    
     let decoder = VideoDecoder::open(path)
         .map_err(|e| format!("Failed to open {}: {}", path, e))?;
 
     let arc = Arc::new(Mutex::new(decoder));
     DECODER_POOL.insert(path.to_string(), arc.clone());
+    
+    eprintln!("[get_decoder] Created decoder in {:?}", start.elapsed());
     Ok(arc)
 }
 

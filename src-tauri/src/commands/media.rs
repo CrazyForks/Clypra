@@ -5,6 +5,8 @@ use std::fs;
 
 #[tauri::command]
 pub async fn get_video_metadata(path: String) -> Result<VideoMetadata, String> {
+    eprintln!("[get_video_metadata] Starting for: {}", path);
+    
     let stream_check = ffmpeg_sidecar::ffprobe_output(&[
         "-v",
         "error",
@@ -57,7 +59,8 @@ pub async fn get_video_metadata(path: String) -> Result<VideoMetadata, String> {
     }
 
     let output_str = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = output_str.trim().lines().collect();
+    let lines: Vec<&str> = output_str.trim().lines().filter(|l| !l.is_empty()).collect();
+    eprintln!("[get_video_metadata] ffprobe output ({} lines after filtering): {:?}", lines.len(), lines);
 
     let (width, height, fps, duration) = if has_video {
         if lines.len() < 4 {
@@ -88,6 +91,9 @@ pub async fn get_video_metadata(path: String) -> Result<VideoMetadata, String> {
     };
 
     let metadata = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+
+    eprintln!("[get_video_metadata] Extracted: duration={}s, {}x{}, fps={}", 
+              duration, width, height, fps);
 
     Ok(VideoMetadata {
         duration,
