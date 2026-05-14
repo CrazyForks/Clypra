@@ -501,6 +501,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "clypra"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "base64 0.22.1",
+ "crossbeam",
+ "dashmap",
+ "ffmpeg-next",
+ "ffmpeg-sys-next",
+ "image",
+ "md5",
+ "once_cell",
+ "proptest",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-shell",
+ "tokio",
+ "uuid",
+ "walkdir",
+ "web-time",
+]
+
+[[package]]
 name = "combine"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4079,33 +4106,6 @@ dependencies = [
  "webview2-com",
  "window-vibrancy",
  "windows",
-]
-
-[[package]]
-name = "tauri-app"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "crossbeam",
- "dashmap",
- "ffmpeg-next",
- "ffmpeg-sys-next",
- "image",
- "md5",
- "once_cell",
- "proptest",
- "rayon",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-shell",
- "tokio",
- "uuid",
- "walkdir",
- "web-time",
 ]
 
 [[package]]

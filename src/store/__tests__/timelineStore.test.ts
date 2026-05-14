@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useTimelineStore } from "../timelineStore";
+import { useHistoryStore } from "../historyStore";
+import { SplitClipCommand } from "../../core/history/commands/SplitClipCommand";
 import type { Clip } from "../../types";
 
 describe("timelineStore clip operations", () => {
@@ -80,9 +82,10 @@ describe("timelineStore clip operations", () => {
     });
   });
 
-  describe("splitClipAtTime", () => {
+  describe("SplitClipCommand via command system", () => {
     it("preserves duration === trimOut - trimIn for both split clips", () => {
-      const { addClip, addTrack, splitClipAtTime } = useTimelineStore.getState();
+      const { addClip, addTrack } = useTimelineStore.getState();
+      const { execute } = useHistoryStore.getState();
 
       addTrack("video");
       const { tracks } = useTimelineStore.getState();
@@ -104,7 +107,10 @@ describe("timelineStore clip operations", () => {
       };
 
       addClip(clip);
-      splitClipAtTime("clip-1", 4);
+
+      // Use command system instead of direct method
+      const command = new SplitClipCommand("clip-1", 4, clip);
+      execute(command);
 
       const { clips } = useTimelineStore.getState();
       expect(clips).toHaveLength(2);
@@ -127,7 +133,8 @@ describe("timelineStore clip operations", () => {
     });
 
     it("handles split with existing trim points", () => {
-      const { addClip, addTrack, splitClipAtTime } = useTimelineStore.getState();
+      const { addClip, addTrack } = useTimelineStore.getState();
+      const { execute } = useHistoryStore.getState();
 
       addTrack("video");
       const { tracks } = useTimelineStore.getState();
@@ -149,7 +156,10 @@ describe("timelineStore clip operations", () => {
       };
 
       addClip(clip);
-      splitClipAtTime("clip-1", 3); // Split at 3s into the clip
+
+      // Use command system instead of direct method
+      const command = new SplitClipCommand("clip-1", 3, clip);
+      execute(command);
 
       const { clips } = useTimelineStore.getState();
       expect(clips).toHaveLength(2);
@@ -365,6 +375,67 @@ describe("timelineStore clip operations", () => {
       addClip(clip2);
 
       expect(getTimelineEndTime()).toBe(15); // 5 + 10
+    });
+  });
+
+  describe("beginBatch / endBatch", () => {
+    beforeEach(() => {
+      const { addClip } = useTimelineStore.getState();
+      addClip({ id: "c1", trackId: "t1", mediaId: "m1", startTime: 0, duration: 2, trimIn: 0, trimOut: 2, x: 0, y: 0, width: 100, height: 100, opacity: 1, rotation: 0 });
+      addClip({ id: "c2", trackId: "t1", mediaId: "m2", startTime: 2, duration: 3, trimIn: 0, trimOut: 3, x: 0, y: 0, width: 100, height: 100, opacity: 1, rotation: 0 });
+      // Reset epoch after setup
+      useTimelineStore.setState({ epoch: 0 });
+    });
+
+    it("defers epoch increment until endBatch", () => {
+      const { beginBatch, endBatch, updateClip } = useTimelineStore.getState();
+
+      beginBatch();
+      updateClip("c1", { startTime: 1 });
+      updateClip("c2", { startTime: 4 });
+
+      // Epoch should NOT have incremented yet
+      expect(useTimelineStore.getState().epoch).toBe(0);
+
+      endBatch();
+
+      // Single epoch increment after batch
+      expect(useTimelineStore.getState().epoch).toBe(1);
+    });
+
+    it("does not increment epoch if no mutations in batch", () => {
+      const { beginBatch, endBatch } = useTimelineStore.getState();
+
+      beginBatch();
+      endBatch();
+
+      expect(useTimelineStore.getState().epoch).toBe(0);
+    });
+
+    it("supports nested batches", () => {
+      const { beginBatch, endBatch, updateClip } = useTimelineStore.getState();
+
+      beginBatch();
+      updateClip("c1", { startTime: 1 });
+      beginBatch(); // nested
+      updateClip("c2", { startTime: 4 });
+      endBatch(); // inner
+
+      // Still inside outer batch — no epoch yet
+      expect(useTimelineStore.getState().epoch).toBe(0);
+
+      endBatch(); // outer
+      expect(useTimelineStore.getState().epoch).toBe(1);
+    });
+
+    it("increments epoch immediately outside a batch", () => {
+      const { updateClip } = useTimelineStore.getState();
+
+      updateClip("c1", { startTime: 5 });
+      expect(useTimelineStore.getState().epoch).toBe(1);
+
+      updateClip("c2", { startTime: 6 });
+      expect(useTimelineStore.getState().epoch).toBe(2);
     });
   });
 });

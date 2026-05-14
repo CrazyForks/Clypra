@@ -19,15 +19,22 @@ fn get_projects_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 #[tauri::command]
 pub fn save_project(app: tauri::AppHandle, project_data: String) -> Result<(), String> {
     let projects_dir = get_projects_dir(&app)?;
-    
+
     let project: Project = serde_json::from_str(&project_data)
         .map_err(|e| format!("Invalid project JSON: {}", e))?;
-    
+
     let file_path = projects_dir.join(format!("{}.json", project.id));
-    
+
+    println!("[save_project] Saving project {} with {} tracks, {} clips, {} media_assets",
+        project.id,
+        project.tracks.len(),
+        project.clips.len(),
+        project.media_assets.len()
+    );
+
     fs::write(&file_path, &project_data)
         .map_err(|e| format!("Failed to save project: {}", e))?;
-    
+
     Ok(())
 }
 
@@ -46,7 +53,7 @@ pub fn get_recent_projects(app: tauri::AppHandle) -> Result<Vec<String>, String>
     if let Ok(entries) = fs::read_dir(&projects_dir) {
         for entry in entries.flatten() {
             if let Ok(path) = entry.path().canonicalize() {
-                if path.extension().map_or(false, |ext| ext == "json") {
+                if path.extension().is_some_and(|ext| ext == "json") {
                     if let Ok(metadata) = fs::metadata(&path) {
                         if let Ok(content) = fs::read_to_string(&path) {
                             if let Ok(modified) = metadata.modified() {
@@ -65,9 +72,35 @@ pub fn get_recent_projects(app: tauri::AppHandle) -> Result<Vec<String>, String>
         }
     }
     
-    projects.sort_by(|a, b| b.0.cmp(&a.0));
+    projects.sort_by_key(|b| std::cmp::Reverse(b.0));
     
     Ok(projects.into_iter().map(|(_, content)| content).collect())
+}
+
+#[tauri::command]
+pub fn rename_project(app: tauri::AppHandle, project_id: String, new_name: String) -> Result<(), String> {
+    let projects_dir = get_projects_dir(&app)?;
+    let file_path = projects_dir.join(format!("{}.json", project_id));
+
+    if !file_path.exists() {
+        return Err(format!("Project file not found: {}", project_id));
+    }
+
+    let content = fs::read_to_string(&file_path)
+        .map_err(|e| format!("Failed to read project: {}", e))?;
+
+    let mut project: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Invalid project JSON: {}", e))?;
+
+    project["name"] = serde_json::Value::String(new_name);
+
+    let updated = serde_json::to_string(&project)
+        .map_err(|e| format!("Failed to serialize project: {}", e))?;
+
+    fs::write(&file_path, updated)
+        .map_err(|e| format!("Failed to save project: {}", e))?;
+
+    Ok(())
 }
 
 #[tauri::command]

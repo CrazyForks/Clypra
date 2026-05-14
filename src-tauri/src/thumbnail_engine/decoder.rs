@@ -285,7 +285,7 @@ impl VideoDecoder {
 
         for &hw_type_raw in hw_types {
             unsafe {
-                let hw_type = std::mem::transmute(hw_type_raw);
+                let hw_type = std::mem::transmute::<u32, ffmpeg::ffi::AVHWDeviceType>(hw_type_raw);
                 let mut hw_ctx = std::ptr::null_mut();
                 let ret = ffmpeg::ffi::av_hwdevice_ctx_create(
                     &mut hw_ctx,
@@ -337,7 +337,7 @@ impl VideoDecoder {
                     self.input_ctx.as_mut_ptr(),
                     self.stream_index as i32,
                     target_pts,
-                    ffmpeg::ffi::AVSEEK_FLAG_BACKWARD as i32,
+                    ffmpeg::ffi::AVSEEK_FLAG_BACKWARD,
                 );
                 if ret < 0 { return Err(format!("Seek failed at {}s", ts)); }
             }
@@ -394,7 +394,6 @@ impl VideoDecoder {
     }
 
     /// Seek and decode a single frame. Optimized for sequential timeline scrubbing.
-
     pub fn decode_frame(
         &mut self,
         timestamp_secs: f64,
@@ -445,7 +444,7 @@ impl VideoDecoder {
                     self.input_ctx.as_mut_ptr(),
                     self.stream_index as i32,
                     target_pts,
-                    ffmpeg::ffi::AVSEEK_FLAG_BACKWARD as i32,
+                    ffmpeg::ffi::AVSEEK_FLAG_BACKWARD,
                 );
                 if ret < 0 {
                     return Err(format!("Seek failed at {}s", ts));
@@ -608,7 +607,7 @@ impl VideoDecoder {
         scaler.run(frame, &mut out).map_err(|e| e.to_string())?;
 
         // FFmpeg frame data may have stride padding - copy tightly packed RGBA
-        let stride = out.stride(0) as usize;
+        let stride = out.stride(0);
         let width = out.width() as usize;
         let height = out.height() as usize;
         let src_data = out.data(0);
@@ -644,7 +643,7 @@ impl VideoDecoder {
         );
         
         // Copy RGBA data into frame (row-by-row to handle stride alignment)
-        let stride = src_frame.stride(0) as usize;
+        let stride = src_frame.stride(0);
         let width = src_w as usize;
         let height = src_h as usize;
         let src_data = src_frame.data_mut(0);
@@ -670,7 +669,7 @@ impl VideoDecoder {
         scaler.run(&src_frame, &mut dst_frame).map_err(|e| e.to_string())?;
         
         // Extract tightly packed RGBA
-        let stride = dst_frame.stride(0) as usize;
+        let stride = dst_frame.stride(0);
         let width = dst_frame.width() as usize;
         let height = dst_frame.height() as usize;
         let dst_data = dst_frame.data(0);

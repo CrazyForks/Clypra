@@ -160,14 +160,7 @@ class PerformanceMetricsTracker {
    */
   logMetrics(): void {
     const summary = this.getSummary();
-    console.log("[PerformanceMetrics]", {
-      scrubFPS: `${summary.scrubFPS} FPS`,
-      avgScrubLatency: `${summary.avgScrubLatency}ms`,
-      avgUploadTime: `${summary.avgUploadTime}ms`,
-      avgRenderTime: `${summary.avgRenderTime}ms`,
-      textureReuseRate: `${summary.textureReuseRate}%`,
-      gpuMemoryMB: `${summary.gpuMemoryMB}MB`,
-    });
+    
   }
 
   /**

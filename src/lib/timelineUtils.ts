@@ -1,12 +1,16 @@
 // Re-export new render engine types (non-breaking alongside existing DENSITY_CONFIGS)
-export type { SpatialTier, TemporalTier, VelocityState } from './renderEngine/types';
-export { VELOCITY_THRESHOLDS, classifyVelocity } from './renderEngine/types';
+export type { SpatialTier, TemporalTier, VelocityState } from "./renderEngine/types";
+export { VELOCITY_THRESHOLDS, classifyVelocity } from "./renderEngine/types";
 
 import type { DragItem, Track, Clip, DensityConfig, DensityLevel } from "../types";
 import { useTimelineStore } from "../store/timelineStore";
 import { useProjectStore } from "../store/projectStore";
+import { useHistoryStore } from "../store/historyStore";
+import { AddTrackCommand, AddClipCommand, DeleteClipCommand } from "../core/history/commands";
 import { capitalize } from "./utils";
 import { DensityLevel as DensityLevelEnum } from "../types";
+import { createClipFromAsset } from "./timelineClip";
+import { generateId } from "@/lib/id";
 
 // Density configurations mapping zoom levels to extraction densities. Each configuration defines the time interval between thumbnails and the zoom range.
 export const DENSITY_CONFIGS: DensityConfig[] = [
@@ -31,8 +35,6 @@ export function getIntervalForDensity(density: DensityLevel): number {
   const config = DENSITY_CONFIGS.find((c) => c.level === density);
   return config?.interval ?? 1.0;
 }
-
-
 
 // Generates a globally-aligned timestamp grid for a clip range.
 // Aligns to a global origin so clips from the same video share cached frames.
@@ -70,7 +72,8 @@ export function generateTimestampGrid(trimIn: number, trimOut: number, interval:
 }
 
 export function handleCreateTrackAndDrop(item: DragItem, monitor: any, insertIndex: number) {
-  const { addTrack, addClip, removeClip, tracks, pixelsPerSecond, scrollLeft } = useTimelineStore.getState();
+  const { tracks, pixelsPerSecond, scrollLeft } = useTimelineStore.getState();
+  const { execute } = useHistoryStore.getState();
 
   const offset = monitor.getClientOffset();
   const containerRect = document.getElementById("timeline-tracks-container")?.getBoundingClientRect();
@@ -83,7 +86,7 @@ export function handleCreateTrackAndDrop(item: DragItem, monitor: any, insertInd
   const existingOfType = tracks.filter((t) => t.type === trackType).length;
 
   const newTrack: Track = {
-    id: crypto.randomUUID(),
+    id: generateId("track"),
     type: trackType,
     name: `${capitalize(trackType)} ${existingOfType + 1}`,
     muted: false,
@@ -92,37 +95,28 @@ export function handleCreateTrackAndDrop(item: DragItem, monitor: any, insertInd
     height: trackType === "video" ? 68 : trackType === "audio" ? 52 : 56,
   };
 
-  // Add track at specific index
-  const currentTracks = useTimelineStore.getState().tracks;
-  const newTracks = [...currentTracks.slice(0, insertIndex), newTrack, ...currentTracks.slice(insertIndex)];
-
-  // Update tracks directly
-  useTimelineStore.setState({ tracks: newTracks });
+  // Use command to add track (enables undo/redo)
+  execute(new AddTrackCommand(newTrack, insertIndex));
 
   if (item.type === "MEDIA_ASSET") {
     const { project } = useProjectStore.getState();
-    const newClip: Clip = {
-      id: crypto.randomUUID(),
-      trackId: newTrack.id,
-      mediaId: item.asset.id,
-      startTime,
-      duration: item.asset.duration || 5,
-      trimIn: 0,
-      trimOut: item.asset.duration || 5,
-      x: 0,
-      y: 0,
-      width: project?.canvasWidth ?? 1920,
-      height: project?.canvasHeight ?? 1080,
-      opacity: 1,
-      rotation: 0,
-    };
-    addClip(newClip);
-  } else if (item.type === "CLIP") {
-    // Moving existing clip to new track
-    removeClip(item.clip.id);
-    addClip({ ...item.clip, trackId: newTrack.id, startTime });
-  }
+    const canvasWidth = project?.canvasWidth ?? 1920;
+    const canvasHeight = project?.canvasHeight ?? 1080;
 
-  // Trigger auto-save
-  useProjectStore.getState().scheduleAutoSave();
+    // Use createClipFromAsset to preserve aspect ratio (professional behavior)
+    const newClip = createClipFromAsset({
+      asset: item.asset,
+      trackId: newTrack.id,
+      startTime,
+      width: canvasWidth,
+      height: canvasHeight,
+    });
+
+    // Use command to add clip (enables undo/redo)
+    execute(new AddClipCommand(newClip));
+  } else if (item.type === "CLIP") {
+    // Moving existing clip to new track - use commands (enables undo/redo)
+    execute(new DeleteClipCommand(item.clip.id));
+    execute(new AddClipCommand({ ...item.clip, trackId: newTrack.id, startTime }));
+  }
 }

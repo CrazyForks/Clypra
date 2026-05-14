@@ -202,11 +202,21 @@ export class WebGLRasterSurface {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, atlasW, atlasH, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 
     // Upload each bitmap into its atlas cell
+    // DEFENSIVE: Skip any invalid/closed bitmaps to prevent black gaps
     for (let i = 0; i < artifacts.length; i++) {
       const art = artifacts[i];
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, col * cellW, row * cellH, gl.RGBA, gl.UNSIGNED_BYTE, art.bitmap);
+      if (!art.bitmap || art.bitmap.width === 0 || art.bitmap.height === 0) {
+        // Bitmap is closed or invalid - skip upload
+        continue;
+      }
+      try {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, col * cellW, row * cellH, gl.RGBA, gl.UNSIGNED_BYTE, art.bitmap);
+      } catch (e) {
+        // Bitmap was closed between the check and upload - skip silently
+        console.warn(`[WebGLRasterSurface] Failed to upload bitmap at index ${i}:`, e);
+      }
     }
 
     // ── Build per-tile geometry ─────────────────────────────────────────────
@@ -214,15 +224,44 @@ export class WebGLRasterSurface {
     // slots. This avoids stretching low-resolution artifacts across the slot.
     const FLOATS_PER_VERTEX = 8;
     const VERTS_PER_TILE = 6;
-    const step = artifacts.length > 1 ? (artifacts.length - 1) / (tileCount - 1) : 0;
     const tileW = Math.round(targetTileW * dpr);
     const tileH = backingH;
     const rects: Array<{ pos: [number, number, number, number]; uv: [number, number, number, number] }> = [];
 
+    // Map tiles to artifacts based on timestamp, not array index.
+    // This prevents blank gaps when artifacts.length < tileCount (heavy zoom).
+    const firstTimestamp = artifacts[0]?.timestampMs ?? 0;
+    const lastTimestamp = artifacts[artifacts.length - 1]?.timestampMs ?? 0;
+    const timeSpan = lastTimestamp - firstTimestamp;
+
     for (let i = 0; i < tileCount; i++) {
-      const artIdx = Math.min(Math.round(i * step), artifacts.length - 1);
+      // Find the artifact closest to this tile's timestamp position
+      const tileRatio = tileCount > 1 ? i / (tileCount - 1) : 0;
+      const targetTimestamp = firstTimestamp + timeSpan * tileRatio;
+
+      // Find closest valid artifact by timestamp (unbounded - no threshold)
+      let artIdx = 0;
+      let minDiff = Infinity;
+      for (let j = 0; j < artifacts.length; j++) {
+        const art = artifacts[j];
+        // DEFENSIVE: Skip invalid/closed bitmaps
+        if (!art.bitmap || art.bitmap.width === 0 || art.bitmap.height === 0) {
+          continue;
+        }
+        const diff = Math.abs(art.timestampMs - targetTimestamp);
+        if (diff < minDiff) {
+          minDiff = diff;
+          artIdx = j;
+        }
+      }
+
       const cell = cells[artIdx];
       const art = artifacts[artIdx];
+
+      // DEFENSIVE: Skip this tile if the selected artifact is invalid
+      if (!art.bitmap || art.bitmap.width === 0 || art.bitmap.height === 0) {
+        continue;
+      }
       const tileX = i * tileW;
 
       // Center-crop: scale bitmap to cover tile, then crop to fit

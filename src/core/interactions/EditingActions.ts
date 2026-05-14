@@ -22,7 +22,7 @@
 
 import { useHistoryStore } from "../../store/historyStore";
 import { useTimelineStore } from "../../store/timelineStore";
-import { getPlaybackClock } from "../playback";
+import { getPlaybackClock } from "../../hooks/usePlaybackClock";
 import { useUIStore } from "../../store/uiStore";
 import { SplitClipCommand } from "../history/commands";
 import type { Clip } from "../../types";
@@ -61,7 +61,6 @@ export class EditingActions {
    * Execute a split operation.
    *
    * This is the ONLY way split should be triggered from UI.
-   * Direct calls to splitClipAtTime() are deprecated.
    *
    * @param intent - Split intent (what to split, where, why)
    * @returns Split result

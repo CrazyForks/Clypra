@@ -2,40 +2,36 @@ import React, { useEffect } from "react";
 // @ts-ignore - react-dnd types issue
 import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
-import { EditorLayout } from "../editor/EditorLayout";
-import { SettingsModal } from "../ui/SettingsModal";
-import { SuccessToast } from "../ui/SuccessToast";
-import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
-import { usePlaybackControls } from "../../hooks/usePlaybackClock";
-import { useProjectStore } from "../../store/projectStore";
-import { useUIStore } from "../../store/uiStore";
-import { useRenderEngineStore } from "../../store/renderEngineStore";
+import { EditorLayout } from "@/components/editor/EditorLayout";
+import { SettingsModal } from "@/components/ui/SettingsModal";
+import { SuccessToast } from "@/components/ui/SuccessToast";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { usePlaybackControls } from "@/hooks/usePlaybackClock";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useProjectStore } from "@/store/projectStore";
+import { useUIStore } from "@/store/uiStore";
 
 export const EditorScreen: React.FC = () => {
-  const { toastMessage } = useKeyboardShortcuts();
+  const toastMessage = useProjectStore((s) => s.toastMessage);
+  const toastVariant = useProjectStore((s) => s.toastVariant);
+  const { toastMessage: shortcutToast } = useKeyboardShortcuts();
   const { setDuration } = usePlaybackControls();
-  const { project } = useProjectStore();
+  const projectDuration = useProjectStore((s) => s.project?.duration ?? 0);
   const { showSettingsModal, toggleSettingsModal } = useUIStore();
-  const { initRuntime, destroyRuntime } = useRenderEngineStore();
 
   useEffect(() => {
-    if (project) {
-      setDuration(project.duration);
-      initRuntime(project.id);
-    }
-
-    return () => {
-      destroyRuntime();
-    };
-  }, [project, setDuration, initRuntime, destroyRuntime]);
+    setDuration(projectDuration);
+  }, [projectDuration, setDuration]);
 
   return (
-    <DndProvider backend={HTML5Backend}>
-      <div className="w-full h-full p-1.5 overflow-hidden">
-        <EditorLayout />
-        <SettingsModal isOpen={showSettingsModal} onClose={toggleSettingsModal} />
-        <SuccessToast message={toastMessage} />
-      </div>
-    </DndProvider>
+    <ErrorBoundary>
+      <DndProvider backend={HTML5Backend}>
+        <div className="w-full h-full p-1.5 overflow-hidden">
+          <EditorLayout />
+          <SettingsModal isOpen={showSettingsModal} onClose={toggleSettingsModal} />
+          <SuccessToast message={toastMessage || shortcutToast} variant={toastMessage ? toastVariant : "success"} />
+        </div>
+      </DndProvider>
+    </ErrorBoundary>
   );
 };

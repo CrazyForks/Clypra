@@ -36,6 +36,8 @@ jobs:
   test-rust:
     name: Test Rust Backend
     runs-on: ubuntu-latest
+    env:
+      PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig
 
     steps:
       - name: Checkout code
@@ -51,8 +53,12 @@ jobs:
             libavcodec-dev \
             libavformat-dev \
             libavutil-dev \
+            libavfilter-dev \
+            libavdevice-dev \
             libswscale-dev \
             libswresample-dev \
+            libpostproc-dev \
+            libclang-dev \
             pkg-config \
             libwebkit2gtk-4.1-dev \
             build-essential \

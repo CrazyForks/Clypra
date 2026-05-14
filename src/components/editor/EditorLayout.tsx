@@ -86,7 +86,7 @@ export const EditorLayout: React.FC = () => {
       addClip(textClip);
     } else {
       // Handle other types (audio, stickers, effects, transitions, captions)
-      console.log(`[EditorLayout] Adding ${type} to timeline:`, item);
+      
       // TODO: Implement handlers for other types
     }
   };

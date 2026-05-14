@@ -103,12 +103,40 @@ export class RasterSurface {
     const tileW = Math.round(targetTileW * dpr);
     const tileH = Math.round(stripHeightPx * dpr);
 
-    // Sample artifacts for each tile slot (nearest-neighbour in time index)
-    const step = artifacts.length > 1 ? (artifacts.length - 1) / (tileCount - 1) : 0;
+    // Map tiles to artifacts based on timestamp, not array index.
+    // This prevents blank gaps when artifacts.length < tileCount (heavy zoom).
+    const firstTimestamp = artifacts[0]?.timestampMs ?? 0;
+    const lastTimestamp = artifacts[artifacts.length - 1]?.timestampMs ?? 0;
+    const timeSpan = lastTimestamp - firstTimestamp;
 
     for (let i = 0; i < tileCount; i++) {
-      const idx = Math.min(Math.round(i * step), artifacts.length - 1);
+      // Find the artifact closest to this tile's timestamp position
+      const tileRatio = tileCount > 1 ? i / (tileCount - 1) : 0;
+      const targetTimestamp = firstTimestamp + timeSpan * tileRatio;
+
+      // Find closest valid artifact by timestamp (unbounded - no threshold)
+      let idx = 0;
+      let minDiff = Infinity;
+      for (let j = 0; j < artifacts.length; j++) {
+        const art = artifacts[j];
+        // DEFENSIVE: Skip invalid/closed bitmaps
+        if (!art.bitmap || art.bitmap.width === 0 || art.bitmap.height === 0) {
+          continue;
+        }
+        const diff = Math.abs(art.timestampMs - targetTimestamp);
+        if (diff < minDiff) {
+          minDiff = diff;
+          idx = j;
+        }
+      }
+
       const art = artifacts[idx];
+
+      // DEFENSIVE: Skip this tile if the selected artifact is invalid
+      if (!art.bitmap || art.bitmap.width === 0 || art.bitmap.height === 0) {
+        continue;
+      }
+
       const x = i * tileW;
 
       this._drawTile(ctx, art.bitmap, art.width, art.height, x, 0, tileW, tileH);
@@ -124,6 +152,11 @@ export class RasterSurface {
    */
   private _drawTile(ctx: CanvasRenderingContext2D, bitmap: ImageBitmap, bmpW: number, bmpH: number, x: number, y: number, tileW: number, tileH: number): void {
     if (bmpW === 0 || bmpH === 0 || tileW === 0 || tileH === 0) return;
+
+    // DEFENSIVE: Check if bitmap is valid before attempting to draw
+    if (!bitmap || bitmap.width === 0 || bitmap.height === 0) {
+      return;
+    }
 
     // Center-crop: scale bitmap to cover tile, then crop to fit
     const bmpAspect = bmpW / bmpH;
@@ -145,13 +178,18 @@ export class RasterSurface {
       drawY = Math.round(y + (tileH - drawH) / 2);
     }
 
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(Math.round(x), Math.round(y), Math.round(tileW), Math.round(tileH));
-    ctx.clip();
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(bitmap, drawX, drawY, drawW, drawH);
-    ctx.restore();
+    try {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(Math.round(x), Math.round(y), Math.round(tileW), Math.round(tileH));
+      ctx.clip();
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(bitmap, drawX, drawY, drawW, drawH);
+      ctx.restore();
+    } catch (e) {
+      // Bitmap was closed between the check and draw - skip silently
+      ctx.restore();
+    }
   }
 
   /** Draw a single poster frame filling the entire strip. */

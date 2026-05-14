@@ -1,6 +1,33 @@
+/**
+ * UI Store
+ *
+ * OWNERSHIP: Ephemeral UI interaction state
+ * PERSISTENCE: Non-persistent (reset on project switch)
+ * MUTABILITY: Mutable (user interactions)
+ *
+ * Responsibilities:
+ * - Track current selections (clips, tracks)
+ * - Manage preview mode (program vs source)
+ * - Handle source mode state (in/out points)
+ * - UI-only state that doesn't affect render output
+ *
+ * Does NOT:
+ * - Persist to disk (intentionally ephemeral)
+ * - Own timeline data (timelineStore owns that)
+ * - Manage runtime resources (ProjectSession handles that)
+ *
+ * Architecture principle:
+ * This is session-scoped interaction state. It's reset by ProjectSession
+ * on project switch because selections don't carry across projects.
+ *
+ * Future consideration:
+ * Some "UI" state may become workspace state (layouts, bookmarks, etc.)
+ * and should migrate to a separate persistentWorkspaceStore.
+ */
+
 import { create } from "zustand";
-import type { MediaAsset } from "../types";
-import { getPlaybackClock } from "../core/playback";
+import type { MediaAsset } from "@/types";
+import { getPlaybackClock } from "@/hooks/usePlaybackClock";
 
 interface UIStore {
   selectedClipIds: string[]; // Multi-select support

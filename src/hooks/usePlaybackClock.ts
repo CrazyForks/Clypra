@@ -4,6 +4,9 @@
  * Provides UI snapshots of playback state (throttled to 10fps).
  * For render loops, read clock.time imperatively instead.
  *
+ * Architecture: Single global PlaybackClock singleton shared by all consumers.
+ * ProjectSession references the same singleton. Disposal handled by destroyRuntime().
+ *
  * Usage:
  *   // For UI (timecode display, scrubber position)
  *   const { time, state } = usePlaybackClock();
@@ -62,6 +65,12 @@ export function usePlaybackControls() {
     [clock],
   );
 }
+
+/**
+ * Get playback clock for imperative reads.
+ * Re-exported from core for convenience.
+ */
+export { getPlaybackClock };
 
 /**
  * Format time as timecode.

@@ -1,20 +1,53 @@
+/**
+ * Project Store
+ *
+ * OWNERSHIP: Project persistence orchestration (facade, not domain owner)
+ * PERSISTENCE: Persistent (saves to disk via Tauri)
+ * MUTABILITY: Orchestrates mutations, doesn't own mutable state
+ *
+ * Responsibilities:
+ * - Load project metadata from disk
+ * - Save project metadata to disk
+ * - Manage media assets list
+ * - Trigger auto-save on changes
+ * - Coordinate project lifecycle (create/open/close)
+ *
+ * Does NOT:
+ * - Own live timeline state (timelineStore is source of truth)
+ * - Mutate timeline directly (delegates to timelineStore.hydrateFromProject)
+ * - Manage runtime resources (ProjectSession handles that)
+ *
+ * Architecture principle:
+ * This is a persistence facade. It reads timelineStore for save,
+ * and delegates to timelineStore.hydrateFromProject() for load.
+ * It NEVER directly mutates timeline state via setState().
+ */
+
 import { create } from "zustand";
-import type { Project, MediaAsset } from "../types";
+import type { Project, MediaAsset } from "@/types";
+import { toRustProject } from "@/types/serialization";
+import { generateId } from "@/lib/id";
 import { useSettingsStore } from "./settingsStore";
-import { TIMELINE_PPS_PER_ZOOM, TIMELINE_ZOOM_DEFAULT } from "../lib/timelineZoom";
+import { TIMELINE_PPS_PER_ZOOM, TIMELINE_ZOOM_DEFAULT } from "@/lib/timelineZoom";
 
 interface ProjectStore {
   project: Project | null;
   mediaAssets: MediaAsset[];
   recentProjects: Project[];
+  toastMessage: string | null;
+  toastVariant: "success" | "error" | "warning";
+  setToastMessage: (message: string | null, variant?: "success" | "error" | "warning") => void;
+  /** Convenience: show toast with variant and auto-dismiss. */
+  showToast: (message: string, variant?: "success" | "error" | "warning", durationMs?: number) => void;
   createProject: (name: string, aspectRatio: string, frameRate: 24 | 30 | 60) => void;
-  loadProject: (project: Project) => void;
+  loadProject: (project: Project, payload?: { tracks?: any[]; clips?: any[]; mediaAssets?: MediaAsset[] }) => Promise<void> | void;
   addMediaAsset: (asset: MediaAsset) => void;
   removeMediaAsset: (assetId: string) => void;
   updateProject: (updates: Partial<Project>) => void;
   setRecentProjects: (projects: Project[]) => void;
+  renameProject: (projectId: string, newName: string) => Promise<void>;
   deleteProject: (projectId: string) => Promise<void>;
-  closeProject: () => void;
+  closeProject: () => Promise<void> | void;
   scheduleAutoSave: () => void;
 }
 
@@ -32,23 +65,26 @@ const getAspectRatioDimensions = (ratio: string): { width: number; height: numbe
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 const AUTO_SAVE_DELAY = 500; // ms
 
-const DEFAULT_TIMELINE_VIEW = {
-  tracks: [],
-  clips: [],
-  scrollLeft: 0,
-  zoomLevel: TIMELINE_ZOOM_DEFAULT,
-  pixelsPerSecond: TIMELINE_ZOOM_DEFAULT * TIMELINE_PPS_PER_ZOOM,
-};
-
 export const useProjectStore = create<ProjectStore>((set, get) => ({
   project: null,
   mediaAssets: [],
   recentProjects: [],
+  toastMessage: null,
+  toastVariant: "success" as const,
 
-  createProject: (name, aspectRatio, frameRate) => {
+  setToastMessage: (message, variant) => set({ toastMessage: message, ...(variant ? { toastVariant: variant } : {}) }),
+
+  showToast: (message, variant = "success", durationMs = 3000) => {
+    set({ toastMessage: message, toastVariant: variant });
+    if (durationMs > 0) {
+      setTimeout(() => set({ toastMessage: null }), durationMs);
+    }
+  },
+
+  createProject: async (name, aspectRatio, frameRate) => {
     const dims = getAspectRatioDimensions(aspectRatio);
     const project: Project = {
-      id: `project-${Date.now()}`,
+      id: generateId("project"),
       name,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -60,45 +96,57 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     };
     set({ project, mediaAssets: [] });
 
-    // Clear timeline state for new project
-    import("./timelineStore").then(({ useTimelineStore }) => {
-      useTimelineStore.setState(DEFAULT_TIMELINE_VIEW);
-    });
+    // Let timelineStore reset its own state
+    try {
+      const { useTimelineStore } = await import("./timelineStore");
+      useTimelineStore.getState().hydrateFromProject({ tracks: [], clips: [] });
+    } catch (err) {
+      console.error("[CreateProject] Failed to hydrate timeline:", err);
+    }
+
+    // Initialize runtime session
+    try {
+      const { createProjectSession } = await import("../core/runtime/ProjectSession");
+      await createProjectSession(project.id);
+    } catch (err) {
+      console.error("[CreateProject] Runtime initialization failed:", err);
+    }
 
     get().scheduleAutoSave();
   },
 
-  loadProject: (project) => {
-    // Clear existing state first
-    set({ project, mediaAssets: [] });
+  loadProject: async (project, payload) => {
+    // Dispose previous runtime first
+    try {
+      const { disposeActiveSession } = await import("../core/runtime/ProjectSession");
+      await disposeActiveSession();
+    } catch (err) {
+      console.error("[LoadProject] Runtime disposal failed:", err);
+    }
 
-    // Clear timeline state and normalize clips on load
-    import("./timelineStore").then(({ useTimelineStore }) => {
-      useTimelineStore.setState(DEFAULT_TIMELINE_VIEW);
-    });
+    // Apply project and mediaAssets (projectStore owns these)
+    set({ project, mediaAssets: payload?.mediaAssets ?? [] });
 
-    // Normalize clips after a brief delay to ensure timeline store is ready
-    setTimeout(() => {
-      import("./timelineStore").then(({ useTimelineStore }) => {
-        import("../lib/timelineClip").then(({ normalizeClipTiming }) => {
-          const { clips } = useTimelineStore.getState();
-          const { mediaAssets } = get();
-
-          // Repair any clips with incorrect duration
-          const normalizedClips = clips.map((clip) => {
-            const asset = mediaAssets.find((a) => a.id === clip.mediaId);
-            return normalizeClipTiming(clip, asset);
-          });
-
-          // Update clips if any were normalized
-          const hasChanges = normalizedClips.some((nc, i) => nc.duration !== clips[i].duration || nc.trimIn !== clips[i].trimIn || nc.trimOut !== clips[i].trimOut);
-
-          if (hasChanges) {
-            useTimelineStore.setState({ clips: normalizedClips });
-          }
-        });
+    // Let timelineStore hydrate its own state (respects ownership boundary)
+    try {
+      const { useTimelineStore } = await import("./timelineStore");
+      useTimelineStore.getState().hydrateFromProject({
+        tracks: payload?.tracks ?? [],
+        clips: payload?.clips ?? [],
       });
-    }, 100);
+    } catch (err) {
+      console.error("[LoadProject] Failed to hydrate timeline state:", err);
+      // On error, reset timeline to empty state
+      import("./timelineStore").then(({ useTimelineStore }) => useTimelineStore.getState().hydrateFromProject({ tracks: [], clips: [] })).catch((resetErr) => console.error("[LoadProject] Failed to reset timeline:", resetErr));
+    }
+
+    // Initialize runtime LAST — stores are now fully populated
+    try {
+      const { createProjectSession } = await import("../core/runtime/ProjectSession");
+      await createProjectSession(project.id);
+    } catch (err) {
+      console.error("[LoadProject] Runtime initialization failed:", err);
+    }
   },
 
   addMediaAsset: (asset) => {
@@ -140,6 +188,32 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ recentProjects: projects });
   },
 
+  renameProject: async (projectId, newName) => {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("rename_project", { projectId, newName });
+
+      // Update in recent projects list
+      set((state) => ({
+        recentProjects: state.recentProjects.map((p) => (p.id === projectId ? { ...p, name: newName } : p)),
+      }));
+
+      // If this project is currently open, update it too
+      const currentProject = get().project;
+      if (currentProject && currentProject.id === projectId) {
+        set((state) => ({
+          project: state.project ? { ...state.project, name: newName } : null,
+        }));
+      }
+
+      get().showToast("Project renamed");
+    } catch (error) {
+      console.error("[RenameProject] Failed to rename project:", error);
+      get().showToast("Failed to rename project", "error");
+      throw error;
+    }
+  },
+
   deleteProject: async (projectId) => {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
@@ -157,52 +231,57 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
     } catch (error) {
       console.error("[DeleteProject] Failed to delete project:", error);
+      get().showToast("Failed to delete project", "error");
       throw error;
     }
   },
 
-  closeProject: () => {
+  closeProject: async () => {
     // Ensure any pending auto-save completes before closing
     if (autoSaveTimer) {
       clearTimeout(autoSaveTimer);
-      // Trigger immediate save
       const state = get();
       const { project, mediaAssets } = state;
 
       if (project) {
-        (async () => {
-          try {
-            const { useTimelineStore } = await import("./timelineStore");
-            const { tracks, clips } = useTimelineStore.getState();
+        try {
+          const { useTimelineStore } = await import("./timelineStore");
+          const { tracks, clips } = useTimelineStore.getState();
 
-            // Convert camelCase to snake_case for Rust backend
-            const projectData = {
-              id: project.id,
-              name: project.name,
-              created_at: project.createdAt,
-              modified_at: Date.now(),
-              aspect_ratio: project.aspectRatio,
-              canvas_width: project.canvasWidth,
-              canvas_height: project.canvasHeight,
-              frame_rate: project.frameRate,
-              duration: project.duration,
-              tracks,
-              clips,
-              media_assets: mediaAssets,
-            };
+          // Convert camelCase to snake_case using centralized serialization
+          const rustProject = toRustProject(project, { tracks, clips, mediaAssets });
 
-            const { invoke } = await import("@tauri-apps/api/core");
-            await invoke("save_project", {
-              projectData: JSON.stringify(projectData),
-            });
-          } catch (error) {
-            console.error("[CloseProject] Failed to save project:", error);
-          }
-        })();
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("save_project", {
+            projectData: JSON.stringify(rustProject),
+          });
+
+          get().showToast("Project saved");
+        } catch (error) {
+          console.error("[CloseProject] Failed to save project:", error);
+          get().showToast("Failed to save before closing", "error");
+        }
       }
     }
+    // Dispose runtime after we've saved timeline state to avoid save-read race
+    try {
+      const { disposeActiveSession } = await import("../core/runtime/ProjectSession");
+      await disposeActiveSession();
+    } catch (err) {
+      console.error("[CloseProject] Error disposing runtime:", err);
+    }
 
+    // Now clear project and media assets
     set({ project: null, mediaAssets: [] });
+
+    // Let timelineStore clear its own state
+    import("./timelineStore")
+      .then(({ useTimelineStore }) => {
+        useTimelineStore.getState().hydrateFromProject({ tracks: [], clips: [] });
+      })
+      .catch((err) => {
+        console.error("[CloseProject] Failed to reset timeline:", err);
+      });
   },
 
   scheduleAutoSave: () => {
@@ -224,28 +303,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         const { useTimelineStore } = await import("./timelineStore");
         const { tracks, clips } = useTimelineStore.getState();
 
-        // Convert camelCase to snake_case for Rust backend
-        const projectData = {
-          id: project.id,
-          name: project.name,
-          created_at: project.createdAt,
-          modified_at: Date.now(),
-          aspect_ratio: project.aspectRatio,
-          canvas_width: project.canvasWidth,
-          canvas_height: project.canvasHeight,
-          frame_rate: project.frameRate,
-          duration: project.duration,
-          tracks,
-          clips,
-          media_assets: mediaAssets,
-        };
+        // Convert camelCase to snake_case using centralized serialization
+        const rustProject = toRustProject(project, { tracks, clips, mediaAssets });
 
         const { invoke } = await import("@tauri-apps/api/core");
         await invoke("save_project", {
-          projectData: JSON.stringify(projectData),
+          projectData: JSON.stringify(rustProject),
         });
+        get().showToast("Project saved");
       } catch (error) {
         console.error("[AutoSave] Failed to save project:", error);
+        // Background operation — log only, don't show error toast
       }
     }, AUTO_SAVE_DELAY);
   },

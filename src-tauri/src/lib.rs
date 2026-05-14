@@ -1,6 +1,7 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Manager;
 use tokio::sync::broadcast;
 
@@ -9,7 +10,7 @@ use std::sync::Arc;
 use thumbnail_engine::decoder::{get_decoder, release_decoder};
 use thumbnail_engine::pyramid::RawRgbaFrame;
 use thumbnail_engine::{
-    canonical_timestamp, clear_video_thumbnail_cache, downsample_pyramid, get_cache_stats,
+    clear_video_thumbnail_cache, downsample_pyramid, get_cache_stats,
     init_thumbnail_engine, tier_inflight_key, ArtifactSource, DensityLevel, FrameContentHash,
     RenderArtifact, SpatialTier, ThumbnailTile, TierCacheKey, FRAME_CACHE, IN_FLIGHT_TIER,
     TIER_CACHE,
@@ -64,6 +65,11 @@ impl InFlightMap {
 
 static IN_FLIGHT_EXTRACTIONS: Lazy<InFlightMap> = Lazy::new(InFlightMap::new);
 
+/// Global cache statistics for monitoring cache effectiveness
+static GLOBAL_ATLAS_HITS: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
+static GLOBAL_TIER_CACHE_HITS: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
+static GLOBAL_DECODES: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
+
 #[cfg(test)]
 mod thumbnail_engine_tests;
 
@@ -86,6 +92,16 @@ async fn init_thumbnail_cache(app_handle: tauri::AppHandle) -> Result<(), String
 #[tauri::command]
 fn get_thumbnail_cache_stats() -> serde_json::Value {
     get_cache_stats()
+}
+
+#[tauri::command]
+fn get_render_cache_stats() -> serde_json::Value {
+    serde_json::json!({
+        "atlas_hits": GLOBAL_ATLAS_HITS.load(Ordering::Relaxed),
+        "tier_cache_hits": GLOBAL_TIER_CACHE_HITS.load(Ordering::Relaxed),
+        "decodes": GLOBAL_DECODES.load(Ordering::Relaxed),
+        "total_requests": GLOBAL_ATLAS_HITS.load(Ordering::Relaxed) + GLOBAL_TIER_CACHE_HITS.load(Ordering::Relaxed) + GLOBAL_DECODES.load(Ordering::Relaxed),
+    })
 }
 
 #[tauri::command]
@@ -154,6 +170,7 @@ async fn extract_poster_frame_command(
 
 use thumbnail_engine::{ResolutionTier, GLOBAL_CACHE};
 
+#[allow(dead_code)]
 async fn save_rgba_as_webp(
     rgba_bytes: &[u8],
     width: u32,
@@ -569,7 +586,7 @@ async fn decode_frames_streaming(
                 match on_tile.send(tile) {
                     Ok(_) => {
                         frames_sent += 1;
-                        if frames_sent <= 3 || frames_sent % 20 == 0 {
+                        if frames_sent <= 3 || frames_sent.is_multiple_of(20) {
                             eprintln!(
                                 "[STREAM] Sent WebP tile #{}/{}: time={:.2}s decode={:?}",
                                 frames_sent, total_frames, time, decode_time
@@ -812,6 +829,242 @@ async fn get_render_artifact(
     Ok(())
 }
 
+/// Batch version of get_render_artifact for multiple timestamps.
+/// Streams artifacts as they become available (atlas first, then tier cache, then decoded).
+#[tauri::command]
+async fn get_render_artifacts_batch(
+    video_path: String,
+    // Multiple millisecond timestamps
+    timestamps_ms: Vec<u64>,
+    // Spatial tiers to produce for each timestamp
+    spatial_tiers: Vec<String>,
+    // Effect graph version for cache keying (0 = no effects)
+    effect_graph_version: u32,
+    // Request ID for tracing
+    request_id: Option<String>,
+    on_artifact: tauri::ipc::Channel<RenderArtifact>,
+) -> Result<(), String> {
+    use thumbnail_engine::atlas::get_atlas_manager;
+    use thumbnail_engine::{DensityLevel, ResolutionTier};
+
+    let req_id = request_id.unwrap_or_else(|| "unknown".to_string());
+    eprintln!("[batch:start] req={} ts={} tiers={:?}", req_id, timestamps_ms.len(), spatial_tiers);
+
+    let video_id = format!("{:x}", md5::compute(&video_path));
+
+    // Parse requested tiers
+    let tiers: Vec<SpatialTier> = spatial_tiers
+        .iter()
+        .filter_map(|s| SpatialTier::from_label(s).ok())
+        .collect();
+    if tiers.is_empty() {
+        return Err("No valid spatial tiers requested".to_string());
+    }
+
+    // Get cache directory for atlas
+    let cache_dir = match GLOBAL_CACHE.cache_dir().await {
+        Some(dir) => dir,
+        None => return Err("Cache not initialized".to_string()),
+    };
+
+    let mut atlas_hits = 0u32;
+    let mut tier_cache_hits = 0u32;
+    let mut decodes = 0u32;
+
+    // Process each timestamp
+    for timestamp_ms in timestamps_ms {
+        let timestamp_secs = timestamp_ms as f64 / 1000.0;
+
+        // Compute content hash
+        let content_hash = FrameContentHash::compute(
+            &video_id,
+            timestamp_ms,
+            effect_graph_version,
+            1.0,
+            0,
+            u64::MAX,
+            false,
+        );
+
+        let frame_id = format!("{}-{}", content_hash.0, timestamp_ms);
+
+        // ── Pass 1: Atlas lookup (instant display) ───────────────────────────────
+        let mut missing_tiers: Vec<SpatialTier> = Vec::new();
+        for tier in &tiers {
+            let (width, height) = tier.dims();
+
+            // Map SpatialTier to DensityLevel and ResolutionTier for atlas lookup
+            let resolution_tier = if width >= 160 {
+                ResolutionTier::Tier2x
+            } else {
+                ResolutionTier::Tier1x
+            };
+            let density = DensityLevel::Medium; // Use Medium as default for now
+
+            // Get atlas manager for this tier
+            let atlas_manager = get_atlas_manager(&video_id, density, resolution_tier, cache_dir.clone()).await;
+
+            // Check if frame is in atlas
+            let manager = atlas_manager.read().await;
+            if let Some(location) = manager.get_location(timestamp_secs) {
+                // Load from atlas
+                if let Ok(rgba_data) = load_from_atlas(&location, width, height).await {
+                    atlas_hits += 1;
+                    let artifact = RenderArtifact {
+                        frame_id: frame_id.clone(),
+                        content_hash: content_hash.0.clone(),
+                        spatial_tier: *tier,
+                        rgba_data,
+                        width,
+                        height,
+                        timestamp_ms,
+                        source: ArtifactSource::BackendTierCache,
+                    };
+                    let _ = on_artifact.send(artifact);
+                    eprintln!("[batch:atlas-hit] req={} tier={:?} ts={} (hits={})", req_id, tier, timestamp_ms, atlas_hits);
+                    continue;
+                }
+            }
+
+            // Not in atlas, check tier cache
+            let key = TierCacheKey {
+                content_hash: content_hash.clone(),
+                tier: *tier,
+            };
+            if let Some(frame) = TIER_CACHE.get(&key) {
+                tier_cache_hits += 1;
+                let artifact = RenderArtifact {
+                    frame_id: frame_id.clone(),
+                    content_hash: content_hash.0.clone(),
+                    spatial_tier: *tier,
+                    rgba_data: frame.data.clone(),
+                    width: frame.width,
+                    height: frame.height,
+                    timestamp_ms,
+                    source: ArtifactSource::BackendTierCache,
+                };
+                let _ = on_artifact.send(artifact);
+                eprintln!("[batch:tier-hit] req={} tier={:?} ts={} (hits={})", req_id, tier, timestamp_ms, tier_cache_hits);
+            } else {
+                missing_tiers.push(*tier);
+            }
+        }
+
+        // ── Pass 2: Decode missing tiers ─────────────────────────────────────────
+        if !missing_tiers.is_empty() {
+            eprintln!("[batch:decode] req={} tiers={:?} ts={}", req_id, missing_tiers, timestamp_ms);
+            decodes += 1;
+            let inflight_key = tier_inflight_key(&content_hash, SpatialTier::L0);
+            let is_new = IN_FLIGHT_TIER.insert(inflight_key.clone(), ()).is_none();
+            let raw_arc = if is_new {
+                let raw = if let Some(existing) = FRAME_CACHE.get(&content_hash) {
+                    existing
+                } else {
+                    let decoder_arc = get_decoder(&video_path).await?;
+                    let (rgba, w, h) = {
+                        let mut dec = decoder_arc.lock().await;
+                        dec.decode_frame_full_res(timestamp_secs)?
+                    };
+                    let frame = Arc::new(RawRgbaFrame::new(rgba, w, h));
+                    FRAME_CACHE.insert(content_hash.clone(), frame.clone());
+                    frame
+                };
+                IN_FLIGHT_TIER.remove(&inflight_key);
+                raw
+            } else {
+                let mut waited = 0u32;
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(5)).await;
+                    waited += 1;
+                    if let Some(f) = FRAME_CACHE.get(&content_hash) {
+                        IN_FLIGHT_TIER.remove(&inflight_key);
+                        break f;
+                    }
+                    if waited > 400 {
+                        return Err(format!("Decode timeout for {}", content_hash.0));
+                    }
+                }
+            };
+
+            // Downsample missing tiers
+            let tier_frames = {
+                let raw = raw_arc.clone();
+                tokio::task::spawn_blocking(move || downsample_pyramid(&raw, &missing_tiers))
+                    .await
+                    .map_err(|e| format!("Downsample task failed: {:?}", e))?
+            };
+
+            // Store and send artifacts
+            for (tier, result) in tier_frames {
+                match result {
+                    Ok(tier_frame) => {
+                        let key = TierCacheKey {
+                            content_hash: content_hash.clone(),
+                            tier,
+                        };
+                        let artifact = RenderArtifact {
+                            frame_id: frame_id.clone(),
+                            content_hash: content_hash.0.clone(),
+                            spatial_tier: tier,
+                            rgba_data: tier_frame.data.clone(),
+                            width: tier_frame.width,
+                            height: tier_frame.height,
+                            timestamp_ms,
+                            source: ArtifactSource::FreshDecode,
+                        };
+                        TIER_CACHE.insert(key, tier_frame);
+                        let _ = on_artifact.send(artifact);
+                        eprintln!("[batch:decoded] req={} tier={:?} ts={}", req_id, tier, timestamp_ms);
+                    }
+                    Err(e) => {
+                        eprintln!("[batch:error] req={} tier={:?} error={}", req_id, tier, e);
+                    }
+                }
+            }
+        }
+    }
+
+    eprintln!("[batch:complete] req={} atlas_hits={} tier_cache_hits={} decodes={}", req_id, atlas_hits, tier_cache_hits, decodes);
+
+    // Update global cache statistics
+    GLOBAL_ATLAS_HITS.fetch_add(atlas_hits as u64, Ordering::Relaxed);
+    GLOBAL_TIER_CACHE_HITS.fetch_add(tier_cache_hits as u64, Ordering::Relaxed);
+    GLOBAL_DECODES.fetch_add(decodes as u64, Ordering::Relaxed);
+
+    Ok(())
+}
+
+/// Load RGBA data from atlas file at specified location.
+async fn load_from_atlas(
+    location: &thumbnail_engine::atlas::AtlasLocation,
+    thumb_width: u32,
+    thumb_height: u32,
+) -> Result<Vec<u8>, String> {
+    // Load atlas image
+    let atlas_data = tokio::fs::read(&location.atlas_path)
+        .await
+        .map_err(|e| format!("Failed to read atlas file: {}", e))?;
+
+    // Decode WebP
+    let atlas_img = image::load_from_memory(&atlas_data)
+        .map_err(|e| format!("Failed to decode atlas image: {}", e))?
+        .to_rgba8();
+
+    // Extract thumbnail from atlas grid
+    let x = location.col * thumb_width;
+    let y = location.row * thumb_height;
+
+    let mut rgba_data = Vec::with_capacity((thumb_width * thumb_height * 4) as usize);
+    for row in y..(y + thumb_height) {
+        for col in x..(x + thumb_width) {
+            let pixel = atlas_img.get_pixel(col, row);
+            rgba_data.extend_from_slice(&pixel.0);
+        }
+    }
+
+    Ok(rgba_data)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -830,6 +1083,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             init_thumbnail_cache,
             get_thumbnail_cache_stats,
+            get_render_cache_stats,
             clear_thumbnail_cache,
             extract_poster_frame_command,
             commands::media::get_video_metadata,
@@ -839,12 +1093,14 @@ pub fn run() {
             commands::project::load_project,
             commands::project::get_recent_projects,
             commands::project::delete_project,
+            commands::project::rename_project,
             // Native FFmpeg decoder commands (fast path for thumbnails)
             decode_frame,
             decode_frame_gpu,
             decode_frames_streaming,
             release_video_decoder,
             get_render_artifact,
+            get_render_artifacts_batch,
             // Video export commands
             commands::export::start_video_export,
             commands::export::write_export_frame,

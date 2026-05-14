@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
-import { Play, Pause, Plus, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useUIStore } from "../../store/uiStore";
 import { useTimelineStore } from "../../store/timelineStore";
@@ -7,6 +7,7 @@ import { useProjectStore } from "../../store/projectStore";
 import { createClipFromAsset } from "../../lib/timelineClip";
 import { GPUPreview } from "./GPUPreview";
 import { AudioWaveform } from "./AudioWaveform";
+import { PreviewTransport } from "./PreviewTransport";
 
 // GPU preview for scrubbing only (precise frame-accurate seeking)
 // Use HTML5 video for playback (hardware decode, buffering, smooth playback)
@@ -18,11 +19,9 @@ export const SourcePreview: React.FC = () => {
   const { project } = useProjectStore();
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const scrubRef = useRef<HTMLDivElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isScrubbing, setIsScrubbing] = useState(false);
   const [useGPU, setUseGPU] = useState(USE_GPU_PREVIEW && sourceAsset?.type === "video");
   const [gpuFailed, setGpuFailed] = useState(false);
 
@@ -41,9 +40,7 @@ export const SourcePreview: React.FC = () => {
     const video = videoRef.current;
     if (!video) return;
 
-    const handleTimeUpdate = () => {
-      if (!isScrubbing) setCurrentTime(video.currentTime);
-    };
+    const handleTimeUpdate = () => setCurrentTime(video.currentTime);
     const handleLoadedMetadata = () => setDuration(video.duration);
     const handleEnded = () => setIsPlaying(false);
 
@@ -56,7 +53,7 @@ export const SourcePreview: React.FC = () => {
       video.removeEventListener("loadedmetadata", handleLoadedMetadata);
       video.removeEventListener("ended", handleEnded);
     };
-  }, [isScrubbing, useGPU]);
+  }, [useGPU]);
 
   // Audio event listeners
   useEffect(() => {
@@ -65,9 +62,7 @@ export const SourcePreview: React.FC = () => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    const handleTimeUpdate = () => {
-      if (!isScrubbing) setCurrentTime(audio.currentTime);
-    };
+    const handleTimeUpdate = () => setCurrentTime(audio.currentTime);
     const handleLoadedMetadata = () => setDuration(audio.duration);
     const handleEnded = () => setIsPlaying(false);
 
@@ -80,36 +75,13 @@ export const SourcePreview: React.FC = () => {
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
       audio.removeEventListener("ended", handleEnded);
     };
-  }, [isScrubbing, sourceAsset?.type]);
+  }, [sourceAsset?.type]);
 
-  // Scrubber drag handlers
-  const seekToPosition = useCallback(
-    (clientX: number) => {
-      if (!scrubRef.current || duration <= 0) return;
-      const rect = scrubRef.current.getBoundingClientRect();
-      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      const newTime = ratio * duration;
-
-      // Seek video or audio
-      if (videoRef.current) videoRef.current.currentTime = newTime;
-      if (audioRef.current) audioRef.current.currentTime = newTime;
-
-      setCurrentTime(newTime);
-    },
-    [duration],
-  );
-
-  useEffect(() => {
-    if (!isScrubbing) return;
-    const handleMove = (e: MouseEvent) => seekToPosition(e.clientX);
-    const handleUp = () => setIsScrubbing(false);
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleUp);
-    return () => {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleUp);
-    };
-  }, [isScrubbing, seekToPosition]);
+  const handleSeek = useCallback((time: number) => {
+    if (videoRef.current) videoRef.current.currentTime = time;
+    if (audioRef.current) audioRef.current.currentTime = time;
+    setCurrentTime(time);
+  }, []);
 
   if (!sourceAsset) return null;
 
@@ -182,7 +154,6 @@ export const SourcePreview: React.FC = () => {
   };
 
   const sourcePath = convertFileSrc(sourceAsset.path);
-  const progressPct = duration > 0 ? (currentTime / duration) * 100 : 0;
   const mediaLabel = sourceAsset.type === "video" ? "video" : sourceAsset.type === "audio" ? "audio" : "image";
 
   return (
@@ -234,64 +205,31 @@ export const SourcePreview: React.FC = () => {
         {sourceAsset.type === "audio" && <audio ref={audioRef} src={sourcePath} preload="auto" style={{ display: "none" }} />}
       </div>
 
-      {/* ── Scrub Bar (thin, edge-to-edge) ────────────────────────── */}
-      <div
-        ref={scrubRef}
-        className="h-[5px] w-full cursor-pointer group relative shrink-0"
-        onMouseDown={(e) => {
-          setIsScrubbing(true);
-          seekToPosition(e.clientX);
-        }}
-      >
-        {/* Track bg */}
-        <div className="absolute inset-0 bg-surface" />
-        {/* In/Out range */}
-        {sourceInPoint !== null && sourceOutPoint !== null && duration > 0 && (
-          <div
-            className="absolute top-0 bottom-0 bg-accent/15"
-            style={{
-              left: `${(sourceInPoint / duration) * 100}%`,
-              width: `${((sourceOutPoint - sourceInPoint) / duration) * 100}%`,
-            }}
-          />
-        )}
-        {/* Progress fill */}
-        <div className="absolute top-0 bottom-0 left-0 bg-accent transition-all duration-100 ease-linear" style={{ width: `${progressPct}%` }} />
-        {/* Playhead dot */}
-        <div className="absolute top-1/2 -translate-y-1/2 w-[10px] h-[10px] rounded-full bg-accent border-2 border-white shadow-md opacity-0 group-hover:opacity-100 transition-all duration-100 ease-linear pointer-events-none" style={{ left: `calc(${progressPct}% - 5px)` }} />
-      </div>
-
-      {/* ── Bottom Controls ────────────────────────────────────────── */}
-      <div className="flex items-center h-10 px-3 shrink-0 gap-3">
-        {/* Timecodes */}
-        <div className="flex items-baseline gap-1 select-none" style={{ fontVariantNumeric: "tabular-nums" }}>
-          <span className="text-[12px] font-medium text-accent">{formatTC(currentTime)}</span>
-          <span className="text-[11px] text-text-muted/50">/</span>
-          <span className="text-[12px] text-text-muted">{formatTC(duration)}</span>
-        </div>
-
-        {/* Centered play button */}
-        <div className="flex-1 flex justify-center">
-          <button onClick={handlePlayPause} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/6 transition-colors text-text-primary" title={isPlaying ? "Pause" : "Play"}>
-            {isPlaying ? <Pause className="w-[18px] h-[18px]" /> : <Play className="w-[18px] h-[18px] ml-0.5" />}
-          </button>
-        </div>
-
-        {/* Right-side actions */}
-        <div className="flex items-center gap-1">
-          <button onClick={() => markSourceIn(currentTime)} className="px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title="Mark In (I)">
-            IN
-          </button>
-          <button onClick={() => markSourceOut(currentTime)} className="px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title="Mark Out (O)">
-            OUT
-          </button>
-          <div className="w-px h-4 bg-white/10 mx-1" />
-          <button onClick={handleAddToTimeline} className="flex items-center gap-1 px-2.5 h-6 rounded bg-accent/90 hover:bg-accent text-white text-[10px] font-semibold transition-colors" title="Add to Timeline">
-            <Plus className="w-3 h-3" />
-            Add
-          </button>
-        </div>
-      </div>
+      <PreviewTransport
+        currentTime={currentTime}
+        duration={duration}
+        isPlaying={isPlaying}
+        onPlayPause={handlePlayPause}
+        onSeek={handleSeek}
+        formatTime={formatTC}
+        inPoint={sourceInPoint}
+        outPoint={sourceOutPoint}
+        rightActions={
+          <>
+            <button onClick={() => markSourceIn(currentTime)} className="px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title="Mark In (I)">
+              IN
+            </button>
+            <button onClick={() => markSourceOut(currentTime)} className="px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title="Mark Out (O)">
+              OUT
+            </button>
+            <div className="w-px h-4 bg-white/10 mx-1" />
+            <button onClick={handleAddToTimeline} className="flex items-center gap-1 px-2.5 h-6 rounded bg-accent/90 hover:bg-accent text-white text-[10px] font-semibold transition-colors" title="Add to Timeline">
+              <Plus className="w-3 h-3" />
+              Add
+            </button>
+          </>
+        }
+      />
     </div>
   );
 };

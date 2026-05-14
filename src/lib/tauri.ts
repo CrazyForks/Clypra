@@ -23,7 +23,7 @@ export function normalizePathForTauriInvoke(inputPath: string): string {
 }
 
 // ─── Native FFmpeg Decoder Commands ───────────────────────────────────────
-// All video operations now use the native ffmpeg-next decoder (no CLI)
+// All video operations use the native ffmpeg-next decoder
 
 import type { DensityLevel, ThumbnailTile } from "../types";
 
@@ -42,9 +42,7 @@ export async function decodeFrame(videoPath: string, timeSecs: number, width: nu
 }
 
 /**
- * Extract multiple frames using the native decoder with streaming.
- * Same architecture as get_thumbnails_for_timestamps but uses native decoder
- * instead of sidecar FFmpeg. Much faster for batch extractions.
+ * Extract multiple frames using the native decoder with streaming, instead of sidecar FFmpeg. Much faster for batch extractions.
  */
 export async function decodeFramesStreaming(videoPath: string, timestamps: number[], density: DensityLevel, width: number, height: number, duration: number, onTile: (tile: ThumbnailTile) => void): Promise<void> {
   const channel = new Channel<ThumbnailTile>();
@@ -62,11 +60,23 @@ export async function decodeFramesStreaming(videoPath: string, timestamps: numbe
 }
 
 /**
- * Release the native decoder for a video to free memory.
- * Call this when a clip is removed from the project.
+ * Release the native decoder for a video to free memory. Call this when a clip is removed from the project.
  */
 export function releaseVideoDecoder(videoPath: string): void {
   invoke("release_video_decoder", {
     videoPath: normalizePathForTauriInvoke(videoPath),
   });
+}
+
+/**
+ * Get render cache statistics (atlas hits, tier cache hits, decodes).
+ * Useful for monitoring cache effectiveness.
+ */
+export async function getRenderCacheStats(): Promise<{
+  atlas_hits: number;
+  tier_cache_hits: number;
+  decodes: number;
+  total_requests: number;
+}> {
+  return invoke("get_render_cache_stats");
 }

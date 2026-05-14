@@ -24,6 +24,7 @@ import { useEffect, useRef, useState } from "react";
 import { GPUTextureCache } from "@/lib/gpuTextureCache";
 import { globalGPUCache } from "@/lib/globalGPUCache";
 import { performanceMetrics } from "@/lib/performanceMetrics";
+import { generateId } from "@/lib/id";
 import { invoke } from "@tauri-apps/api/core";
 import { normalizePathForTauriInvoke } from "@/lib/tauri";
 
@@ -45,7 +46,7 @@ export function GPUPreview({ videoPath, currentTime, isPlaying, width, height, d
   const [useGPUCache, setUseGPUCache] = useState(false);
   const playbackTimerRef = useRef<number | null>(null);
   const lastFrameTimeRef = useRef<number>(0);
-  const componentId = useRef(`gpu-preview-${Math.random().toString(36).substr(2, 9)}`).current;
+  const componentId = useRef(generateId("gpu-preview")).current;
 
   // Try to use global GPU cache first
   const useGlobalCache = typeof window !== "undefined" && globalGPUCache.isInitialized();
@@ -54,7 +55,6 @@ export function GPUPreview({ videoPath, currentTime, isPlaying, width, height, d
   useEffect(() => {
     // Wait for canvas to be mounted
     if (!canvasRef.current) {
-      console.warn("[GPUPreview] Canvas ref not available yet, will retry on next render");
       return;
     }
 

@@ -133,6 +133,45 @@ pub fn canonical_timestamp(time_secs: f64) -> u64 {
     (time_secs * 1000.0).round() as u64
 }
 
+// ─── AtlasCacheKey ─────────────────────────────────────────────────────────────
+
+/// Stable cache identity for atlas-based persistent storage.
+/// Key components: video_hash + tier + sampling_strategy + effect_graph_version
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AtlasCacheKey {
+    pub video_hash: String,
+    pub tier: SpatialTier,
+    pub sampling_strategy: String,  // e.g., "tile_width:80" or "density:medium"
+    pub effect_graph_version: u32,
+}
+
+impl AtlasCacheKey {
+    pub fn compute(
+        video_path: &str,
+        tier: SpatialTier,
+        sampling_strategy: &str,
+        effect_graph_version: u32,
+    ) -> Self {
+        let video_hash = format!("{:x}", md5::compute(video_path));
+        Self {
+            video_hash,
+            tier,
+            sampling_strategy: sampling_strategy.to_string(),
+            effect_graph_version,
+        }
+    }
+
+    pub fn as_cache_key(&self) -> String {
+        format!(
+            "{}_{}_{}_{}",
+            self.video_hash,
+            self.tier.label(),
+            self.sampling_strategy,
+            self.effect_graph_version
+        )
+    }
+}
+
 // ─── TierCacheKey ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -276,6 +315,12 @@ pub struct BackendFrameCache {
 
 const FRAME_CACHE_BUDGET: u64 = 180 * 1024 * 1024; // 180 MB
 
+impl Default for BackendFrameCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BackendFrameCache {
     pub fn new() -> Self {
         Self {
@@ -333,6 +378,12 @@ pub struct BackendTierCache {
 
 const TIER_CACHE_BUDGET: u64 = 120 * 1024 * 1024; // 120 MB
 const TIER_INACTIVE_EVICT_SECS: u64 = 10;
+
+impl Default for BackendTierCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl BackendTierCache {
     pub fn new() -> Self {
@@ -510,7 +561,7 @@ pub fn downsample_pyramid(
 }
 
 fn align_dimension(value: u32) -> u32 {
-    let aligned = ((value.max(1) + 1) / 2) * 2;
+    let aligned = value.max(1).div_ceil(2) * 2;
     aligned.max(2)
 }
 

@@ -1,15 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, Expand, Pause, Play, Shrink, SkipBack, SkipForward, Volume2, VolumeX } from "lucide-react";
-import { usePlaybackClock, usePlaybackControls } from "../../hooks/usePlaybackClock";
-import { getPlaybackClock } from "../../core/playback";
-import { useProjectStore } from "../../store/projectStore";
-import { useTimelineStore } from "../../store/timelineStore";
-import { useUIStore } from "../../store/uiStore";
-import { evaluateSceneCached } from "../../core/evaluation/evaluator";
-import { getFrameScheduler } from "../../core/scheduler/FrameScheduler";
+import { Check, ChevronDown, Expand, Shrink, Volume2, VolumeX } from "lucide-react";
+import { usePlaybackClock, usePlaybackControls, getPlaybackClock } from "@/hooks/usePlaybackClock";
+import { useProjectStore } from "@/store/projectStore";
+import { useTimelineStore } from "@/store/timelineStore";
+import { useUIStore } from "@/store/uiStore";
+import { evaluateSceneCached } from "@/core/evaluation/evaluator";
+import { getFrameScheduler } from "@/core/scheduler/FrameScheduler";
+import { getActiveSessionOrNull } from "@/core/runtime/ProjectSession";
 import { SourcePreview } from "./SourcePreview";
-import { cn } from "../../lib/utils";
-import type { EvaluatedMediaLayer } from "../../core/evaluation/types";
+import { PreviewTransport } from "./PreviewTransport";
+import { GPUTextureCache } from "@/lib/gpuTextureCache";
+import { cn } from "@/lib/utils";
+import type { EvaluatedMediaLayer } from "@/core/evaluation/types";
+import { AspectRatio, PREVIEW_ASPECT_LABEL } from "@/types";
+import { AspectMenuRow } from "../ui/AspectRatio";
 
 /** Format time in seconds to MM:SS or HH:MM:SS */
 function formatTime(seconds: number): string {
@@ -23,50 +27,50 @@ function formatTime(seconds: number): string {
   return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
-/** Program preview “viewer” aspect (width / height). */
-type PreviewAspectPreset = "original" | "custom" | "16:9" | "4:3" | "2.35:1" | "2:1" | "1.85:1" | "9:16" | "3:4" | "5.8-inch" | "1:1";
-
-const PREVIEW_ASPECT_LABEL: Record<PreviewAspectPreset, string> = {
-  original: "Original",
-  custom: "Custom",
-  "16:9": "16:9",
-  "4:3": "4:3",
-  "2.35:1": "2.35:1",
-  "2:1": "2:1",
-  "1.85:1": "1.85:1",
-  "9:16": "9:16",
-  "3:4": "3:4",
-  "5.8-inch": "5.8-inch",
-  "1:1": "1:1",
-};
-
-const PREVIEW_ASPECT_RATIO: Partial<Record<PreviewAspectPreset, number>> = {
+const PREVIEW_ASPECT_RATIO: Record<AspectRatio, number | null> = {
+  original: null, // Uses project canvas
   "16:9": 16 / 9,
-  "4:3": 4 / 3,
-  "2.35:1": 2.35,
-  "2:1": 2,
-  "1.85:1": 1.85,
   "9:16": 9 / 16,
-  "3:4": 3 / 4,
-  "5.8-inch": 1170 / 2532,
   "1:1": 1,
+  "4:5": 4 / 5,
 };
 
-function previewAspectWidthOverHeight(preset: PreviewAspectPreset, canvasWidth: number, canvasHeight: number): number {
+// Canvas dimensions for each preset (based on common resolutions)
+const CANVAS_DIMENSIONS: Record<Exclude<AspectRatio, "original">, { width: number; height: number }> = {
+  "16:9": { width: 1920, height: 1080 },
+  "9:16": { width: 1080, height: 1920 },
+  "1:1": { width: 1080, height: 1080 },
+  "4:5": { width: 1080, height: 1350 },
+};
+
+function previewAspectWidthOverHeight(preset: AspectRatio, canvasWidth: number, canvasHeight: number): number {
   const ch = Math.max(1, canvasHeight);
-  if (preset === "original" || preset === "custom") {
+  if (preset === "original") {
     return canvasWidth / ch;
   }
   return PREVIEW_ASPECT_RATIO[preset] ?? canvasWidth / ch;
 }
 
+/**
+ * Resolve aspect ratio for "Original" preview mode.
+ *
+ * IMPORTANT: In professional NLEs, "Original" means the SEQUENCE aspect ratio,
+ * NOT the source media aspect ratio. The sequence defines the render universe.
+ *
+ * The program monitor always visualizes sequence space, never adapts to clips.
+ * This maintains stability for:
+ * - Overlays and graphics
+ * - Text positioning
+ * - Motion graphics
+ * - Transitions
+ * - Export consistency
+ *
+ * If users want to see source media aspect ratio, they should use Source Preview mode.
+ */
 function resolveOriginalPreviewAspect(layers: readonly { mediaId: string }[], mediaAssets: Array<{ id: string; width?: number; height?: number }>, canvasWidth: number, canvasHeight: number): number {
-  const projectRatio = canvasWidth / Math.max(1, canvasHeight);
-  if (layers.length !== 1) return projectRatio;
-  const onlyLayer = layers[0];
-  const asset = mediaAssets.find((a) => a.id === onlyLayer.mediaId);
-  if (!asset?.width || !asset?.height || asset.width <= 0 || asset.height <= 0) return projectRatio;
-  return asset.width / asset.height;
+  // Always return sequence aspect ratio
+  // The sequence is the coordinate universe - it doesn't change based on clips
+  return canvasWidth / Math.max(1, canvasHeight);
 }
 
 /** Largest rectangle with aspect W/H = R inside the panel. */
@@ -96,27 +100,6 @@ function PreviewAspectShapeIcon({ widthOverHeight }: { widthOverHeight: number }
   return <span className="inline-flex shrink-0 rounded-sm border border-border-soft bg-bg" style={{ width: w, height: h }} aria-hidden />;
 }
 
-function AspectMenuRow({ preset, selected, onSelect, icon, disabled }: { preset: PreviewAspectPreset; selected: PreviewAspectPreset; onSelect: (p: PreviewAspectPreset) => void; icon: React.ReactNode; disabled?: boolean }) {
-  const isSel = selected === preset;
-  return (
-    <button
-      type="button"
-      role="option"
-      aria-selected={isSel}
-      disabled={disabled}
-      title={preset === "custom" ? "Custom size (coming soon)" : PREVIEW_ASPECT_LABEL[preset]}
-      className={cn("flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-text-primary hover:bg-surface-raised", isSel && "bg-surface-raised", disabled && "cursor-not-allowed opacity-45 hover:bg-transparent")}
-      onClick={() => {
-        if (!disabled) onSelect(preset);
-      }}
-    >
-      <span className="flex w-5 shrink-0 justify-center">{isSel ? <Check className="h-3.5 w-3.5 text-accent" /> : null}</span>
-      <span className="min-w-0 flex-1 truncate">{PREVIEW_ASPECT_LABEL[preset]}</span>
-      <span className="flex shrink-0 items-center justify-end text-text-muted">{icon}</span>
-    </button>
-  );
-}
-
 export const PreviewPanel: React.FC = () => {
   const { previewMode } = useUIStore();
 
@@ -135,8 +118,12 @@ const ProgramPreview: React.FC = () => {
   const { play, pause, seek, setSpeed, setDuration, setFrameRate } = usePlaybackControls();
   const clock = getPlaybackClock();
 
-  const { project, mediaAssets } = useProjectStore();
-  const { tracks, clips, epoch } = useTimelineStore();
+  const project = useProjectStore((s) => s.project);
+  const updateProject = useProjectStore((s) => s.updateProject);
+  const mediaAssets = useProjectStore((s) => s.mediaAssets);
+  const tracks = useTimelineStore((s) => s.tracks);
+  const clips = useTimelineStore((s) => s.clips);
+  const epoch = useTimelineStore((s) => s.epoch);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
@@ -147,12 +134,14 @@ const ProgramPreview: React.FC = () => {
   const [previewVideoReadyTick, setPreviewVideoReadyTick] = useState(0);
   /** fit = letterbox full canvas; fill = zoom canvas to cover panel (crop edges). */
   const [previewScaleMode, setPreviewScaleMode] = useState<"fit" | "fill">("fit");
-  const [previewAspectPreset, setPreviewAspectPreset] = useState<PreviewAspectPreset>("original");
+  const [previewAspectPreset, setPreviewAspectPreset] = useState<AspectRatio>("original");
   const [aspectMenuOpen, setAspectMenuOpen] = useState(false);
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
   const aspectMenuRef = useRef<HTMLDivElement>(null);
   const speedMenuRef = useRef<HTMLDivElement>(null);
   const [useCanvasPreview] = useState(true); // Canvas is authoritative visual output
+  const gpuCacheRef = useRef<GPUTextureCache | null>(null);
+  const gpuFallbackRef = useRef(false); // true if WebGL2 unavailable → use Canvas2D
   const [showTelemetry, setShowTelemetry] = useState(false);
   const [telemetryStats, setTelemetryStats] = useState<{
     avgEvaluationTimeMs: number;
@@ -163,9 +152,33 @@ const ProgramPreview: React.FC = () => {
     droppedFrames: number;
     driftMagnitude: number;
   } | null>(null);
+  const telemetryRef = useRef(telemetryStats);
+  const lastTelemetryFlushRef = useRef(0);
+  const showTelemetryRef = useRef(showTelemetry);
+  showTelemetryRef.current = showTelemetry;
 
   const droppedFramesRef = useRef(0);
   const maxDriftRef = useRef(0);
+
+  // Track original canvas dimensions when project loads
+  const originalCanvasDimsRef = useRef<{ width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    if (project && !originalCanvasDimsRef.current) {
+      // Store original dimensions on first load
+      originalCanvasDimsRef.current = {
+        width: project.canvasWidth,
+        height: project.canvasHeight,
+      };
+    }
+  }, [project?.id]); // Only run when project changes
+
+  // Sync preview aspect preset with project aspect ratio when project loads
+  useEffect(() => {
+    if (project?.aspectRatio) {
+      setPreviewAspectPreset(project.aspectRatio);
+    }
+  }, [project?.id, project?.aspectRatio]); // Re-run when project changes
 
   // Initialize clock with project settings (only when they actually change)
   const prevDurationRef = useRef<number>(0);
@@ -193,7 +206,7 @@ const ProgramPreview: React.FC = () => {
       setFrameRate(newFrameRate);
       prevFrameRateRef.current = newFrameRate;
     }
-  }, [project, clips, setDuration, setFrameRate]);
+  }, [project, clips]);
 
   useEffect(() => {
     if (!aspectMenuOpen) return;
@@ -278,7 +291,35 @@ const ProgramPreview: React.FC = () => {
   const displayWidth = canvasWidth * scale;
   const displayHeight = canvasHeight * scale;
 
+  // GPU cache initialization — create once, reuse across resizes and state changes.
+  // GPU resources survive layout changes; only disposed on unmount.
+  useEffect(() => {
+    if (!useCanvasPreview || !canvasRef.current || gpuFallbackRef.current) return;
+
+    // Already initialized — reuse existing cache
+    if (gpuCacheRef.current) return;
+
+    try {
+      gpuCacheRef.current = new GPUTextureCache(canvasRef.current);
+    } catch {
+      // WebGL2 unavailable — fall back to Canvas2D permanently
+      gpuFallbackRef.current = true;
+    }
+  }, [useCanvasPreview]);
+
+  // GPU cache disposal — only on unmount
+  useEffect(() => {
+    return () => {
+      if (gpuCacheRef.current) {
+        gpuCacheRef.current.dispose();
+        gpuCacheRef.current = null;
+      }
+    };
+  }, []);
+
   // Canvas rendering - INDEPENDENT RAF LOOP (not tied to React state)
+  // GPU-first: uploads ImageBitmaps as WebGL2 textures for zero-copy reuse.
+  // Falls back to Canvas2D if WebGL2 is unavailable.
   useEffect(() => {
     if (!useCanvasPreview || !canvasRef.current || !project) return;
 
@@ -286,10 +327,15 @@ const ProgramPreview: React.FC = () => {
 
     if (displayWidth === 0 || displayHeight === 0) return;
 
-    // Clear canvas immediately when dimensions change to avoid showing stretched content
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.clearRect(0, 0, displayWidth, displayHeight);
+    // ── Resolve rendering context (GPU cache persists across re-runs) ──
+    const gpuCache = gpuCacheRef.current;
+    let ctx2d: CanvasRenderingContext2D | null = null;
+
+    if (!gpuCache) {
+      ctx2d = canvas.getContext("2d");
+      if (ctx2d) {
+        ctx2d.clearRect(0, 0, displayWidth, displayHeight);
+      }
     }
 
     // Get scheduler and update timeline state
@@ -299,6 +345,10 @@ const ProgramPreview: React.FC = () => {
     let rafId: number | null = null;
     let isActive = true;
     let isRendering = false;
+    let lastJobId: string | null = null;
+
+    // GPU memory limit for preview frame textures (128 MB)
+    const GPU_MEMORY_LIMIT_MB = 128;
 
     // Independent render loop (reads clock imperatively)
     const renderLoop = () => {
@@ -315,6 +365,22 @@ const ProgramPreview: React.FC = () => {
 
       isRendering = true;
       const timeToRender = clock.time;
+
+      // Check GPU texture cache for this frame (skip scheduler entirely on cache hit)
+      if (gpuCache) {
+        const cacheKey = `preview:${epoch}:${timeToRender.toFixed(3)}:${displayWidth}x${displayHeight}`;
+        if (gpuCache.hasTexture(cacheKey)) {
+          gpuCache.clear();
+          gpuCache.renderTexture(cacheKey, 0, 0, displayWidth, displayHeight);
+          isRendering = false;
+          return;
+        }
+      }
+
+      // Cancel previous job if still pending to prevent queue buildup
+      if (lastJobId) {
+        scheduler.cancel(lastJobId);
+      }
 
       // Build map of active video elements to bypass resource decoding
       const activeVideoElements = new Map<string, HTMLVideoElement>();
@@ -336,6 +402,7 @@ const ProgramPreview: React.FC = () => {
         priority: "realtime",
         videoElements: activeVideoElements,
       });
+      lastJobId = jobId;
 
       scheduler
         .wait(jobId)
@@ -344,17 +411,27 @@ const ProgramPreview: React.FC = () => {
           if (!isActive) return;
 
           if (result.data instanceof ImageBitmap) {
-            const ctx = canvas.getContext("2d");
-            if (ctx) {
-              ctx.clearRect(0, 0, displayWidth, displayHeight);
-              ctx.drawImage(result.data, 0, 0);
+            if (gpuCache) {
+              // GPU path: upload bitmap as texture, render from GPU, close bitmap
+              const cacheKey = `preview:${epoch}:${timeToRender.toFixed(3)}:${displayWidth}x${displayHeight}`;
+              gpuCache.uploadTexture(cacheKey, result.data, result.data.width, result.data.height);
+              gpuCache.clear();
+              gpuCache.renderTexture(cacheKey, 0, 0, displayWidth, displayHeight);
+              result.data.close();
+
+              // Evict LRU textures if GPU memory exceeds limit
+              gpuCache.evictLRU(GPU_MEMORY_LIMIT_MB);
+            } else if (ctx2d) {
+              // Canvas2D fallback path
+              ctx2d.clearRect(0, 0, displayWidth, displayHeight);
+              ctx2d.drawImage(result.data, 0, 0);
               result.data.close();
             }
           }
 
-          // Update telemetry
+          // Update telemetry (throttled to 4fps, only when visible)
           const stats = scheduler.getStats();
-          setTelemetryStats({
+          telemetryRef.current = {
             avgEvaluationTimeMs: stats.avgEvaluationTimeMs,
             avgRasterTimeMs: stats.avgRasterTimeMs,
             avgTotalTimeMs: stats.avgTotalTimeMs,
@@ -362,8 +439,13 @@ const ProgramPreview: React.FC = () => {
             active: stats.active,
             droppedFrames: droppedFramesRef.current,
             driftMagnitude: maxDriftRef.current,
-          });
-          maxDriftRef.current = 0; // Reset after reporting
+          };
+          const now = performance.now();
+          if (showTelemetryRef.current && now - lastTelemetryFlushRef.current > 250) {
+            lastTelemetryFlushRef.current = now;
+            setTelemetryStats(telemetryRef.current);
+            maxDriftRef.current = 0;
+          }
         })
         .catch((error: Error) => {
           isRendering = false;
@@ -376,16 +458,69 @@ const ProgramPreview: React.FC = () => {
     // Start render loop
     rafId = requestAnimationFrame(renderLoop);
 
-    // Cleanup
+    // Cleanup: stop render loop and cancel pending jobs (GPU cache survives)
     return () => {
       isActive = false;
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
       }
+      if (lastJobId) {
+        scheduler.cancel(lastJobId);
+      }
     };
   }, [useCanvasPreview, clips, tracks, mediaAssets, project, epoch, clock, displayWidth, displayHeight]);
 
-  // Video sync - EVENT DRIVEN (only on state changes, not every frame)
+  // Create/destroy video elements (only when scene changes)
+  useEffect(() => {
+    const currentVideoKeys = new Set<string>();
+
+    // Register video elements with session
+    Object.values(videoRefs.current).forEach((video) => {
+      if (!video) return;
+
+      const session = getActiveSessionOrNull();
+
+      if (session && session.state === "active") {
+        const clipId = video.dataset.clipId;
+        const mediaId = video.dataset.mediaId;
+        if (clipId && mediaId) {
+          const key = `${clipId}-${mediaId}`;
+          session.registerVideoElement(key, video);
+          currentVideoKeys.add(key);
+        }
+      }
+    });
+
+    // Cleanup: ONLY on unmount or when scene changes
+    return () => {
+      const session = getActiveSessionOrNull();
+      if (session) {
+        currentVideoKeys.forEach((key) => {
+          session.unregisterVideoElement(key);
+        });
+      }
+
+      // Only cleanup videos that are no longer in the scene
+      Object.entries(videoRefs.current).forEach(([key, video]) => {
+        if (!video) return;
+        const clipId = video.dataset.clipId;
+        const mediaId = video.dataset.mediaId;
+        const videoKey = `${clipId}-${mediaId}`;
+
+        // Only cleanup if this video is not in current scene
+        const stillInScene = scene.visualLayers.some((l) => l.layerType === "media" && l.clipId === clipId && l.mediaId === mediaId);
+
+        if (!stillInScene) {
+          video.pause();
+          video.src = "";
+          video.load();
+          delete videoRefs.current[key];
+        }
+      });
+    };
+  }, [scene.metadata.activeMediaHash]); // Only re-run when scene content changes
+
+  // Sync video playback state (doesn't touch src)
   useEffect(() => {
     const currentClockTime = clock.time;
 
@@ -404,15 +539,13 @@ const ProgramPreview: React.FC = () => {
 
         if (clip) {
           const clipLocalTime = currentClockTime - clip.startTime;
-          const trimIn = clip.trimIn || 0; // Default to 0 if undefined
+          const trimIn = clip.trimIn || 0;
           const sourceTime = trimIn + clipLocalTime;
           const targetTime = Math.max(0, Math.min(sourceTime, Math.max(0, video.duration - 0.01)));
 
-          // Set time when paused or when starting playback
           if (clockState.state !== "playing") {
             video.currentTime = targetTime;
           } else if (video.paused) {
-            // Starting playback - set initial time
             video.currentTime = targetTime;
           }
         }
@@ -421,11 +554,15 @@ const ProgramPreview: React.FC = () => {
       // Play/pause based on clock state
       if (clockState.state === "playing") {
         if (video.paused) {
-          const p = video.play();
-          if (p && typeof p.catch === "function")
-            void p.catch((err) => {
-              console.error("video.play() failed:", err);
+          // Remove readyState check - let browser queue the play
+          const playPromise = video.play();
+          if (playPromise !== undefined) {
+            playPromise.catch((err) => {
+              if (err.name !== "AbortError") {
+                console.warn("video.play() failed:", err);
+              }
             });
+          }
         }
       } else {
         if (!video.paused) {
@@ -433,70 +570,62 @@ const ProgramPreview: React.FC = () => {
         }
       }
     });
-  }, [clockState.state, isMuted, volume, clockState.speed, clips, clock, previewVideoReadyTick, scene.metadata.activeMediaHash]);
 
-  // Periodic drift correction (low frequency, not every frame)
+    // NO cleanup here - videos persist across playback state changes
+  }, [clockState.state, isMuted, volume, clockState.speed, clips, clock, previewVideoReadyTick]);
+
+  // Continuous drift correction via RAF (replaces 250ms interval for frame-accurate sync)
   useEffect(() => {
     if (clockState.state !== "playing") return;
 
-    const interval = setInterval(() => {
-      const currentClockTime = clock.time;
+    let rafId: number | null = null;
+
+    const syncLoop = () => {
+      const currentClockTime = clock.time; // Fresh time every frame
 
       Object.values(videoRefs.current).forEach((video) => {
         if (!video) return;
 
-        // Find the clip for this video
         const clipId = video.dataset.clipId;
         const clip = clips.find((c) => c.id === clipId);
         if (!clip) return;
 
-        // Calculate source time based on clock time
         const clipLocalTime = currentClockTime - clip.startTime;
         if (clipLocalTime < 0 || clipLocalTime > clip.duration) {
-          // Video is outside clip bounds, pause it
-          if (!video.paused) {
-            video.pause();
-          }
+          if (!video.paused) video.pause();
           return;
         }
 
-        // Calculate source time (accounting for trim)
-        const trimIn = clip.trimIn || 0; // Default to 0 if undefined
+        const trimIn = clip.trimIn || 0;
         const sourceTime = trimIn + clipLocalTime;
 
-        // readyState >= 3 means HAVE_FUTURE_DATA (can play smoothly)
         if (Number.isFinite(video.duration) && video.duration > 0 && video.readyState >= 3) {
           const targetTime = Math.max(0, Math.min(sourceTime, Math.max(0, video.duration - 0.01)));
           const drift = Math.abs(video.currentTime - targetTime);
 
           maxDriftRef.current = Math.max(maxDriftRef.current, drift);
 
-          // Add DOM-level preservesPitch to prevent crackling on speed changes
           if ("preservesPitch" in video) {
             (video as any).preservesPitch = false;
           }
 
           if (drift < 0.1) {
-            // 100ms tolerance for natural jitter
-            // <100ms: Ignore, perfect sync
+            // <100ms: Perfect sync — just ensure correct playbackRate
             if (Math.abs(video.playbackRate - clockState.speed) > 0.01) {
               video.playbackRate = clockState.speed;
             }
-          } else if (drift >= 0.1 && drift <= 0.3) {
-            // 100ms - 300ms: Soft playbackRate correction (2% instead of 5%)
+          } else if (drift <= 0.3) {
+            // 100ms - 300ms: Soft playbackRate correction
             const correctionSpeed = video.currentTime < targetTime ? clockState.speed * 1.02 : clockState.speed * 0.98;
             if (Math.abs(video.playbackRate - correctionSpeed) > 0.01) {
-              console.log("[PreviewPanel] Soft drift correction", { drift: drift.toFixed(3), newSpeed: correctionSpeed.toFixed(2), currentTime: video.currentTime });
               video.playbackRate = correctionSpeed;
             }
-          } else if (drift > 0.3 && drift <= 0.6) {
+          } else if (drift <= 0.6) {
             // 300ms - 600ms: Hard seek
-            console.warn("[PreviewPanel] Hard seek drift correction", { drift: drift.toFixed(3), targetTime });
             video.currentTime = targetTime;
             video.playbackRate = clockState.speed;
-          } else if (drift > 0.6) {
+          } else {
             // >600ms: Playback recovery reset
-            console.warn("[PreviewPanel] Playback recovery reset", { drift: drift.toFixed(3), targetTime });
             video.pause();
             video.currentTime = targetTime;
             video.playbackRate = clockState.speed;
@@ -505,10 +634,15 @@ const ProgramPreview: React.FC = () => {
           }
         }
       });
-    }, 250); // Check every 250ms
 
-    return () => clearInterval(interval);
-  }, [clockState.state, clips, clock]);
+      rafId = requestAnimationFrame(syncLoop);
+    };
+
+    rafId = requestAnimationFrame(syncLoop);
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, [clockState.state, clockState.speed, clips, clock]);
 
   if (!project) return null;
 
@@ -524,13 +658,30 @@ const ProgramPreview: React.FC = () => {
     );
   }
 
-  const landscapePresets: PreviewAspectPreset[] = ["16:9", "4:3", "2.35:1", "2:1", "1.85:1"];
-  const portraitPresets: PreviewAspectPreset[] = ["9:16", "3:4", "5.8-inch"];
-
-  const selectAspectPreset = (p: PreviewAspectPreset) => {
-    if (p === "custom") return;
+  const selectAspectPreset = (p: AspectRatio) => {
     setPreviewAspectPreset(p);
     setAspectMenuOpen(false);
+
+    if (!project) return;
+
+    // Handle "original" - restore to original canvas dimensions
+    if (p === "original") {
+      if (originalCanvasDimsRef.current) {
+        updateProject({
+          canvasWidth: originalCanvasDimsRef.current.width,
+          canvasHeight: originalCanvasDimsRef.current.height,
+          aspectRatio: "original",
+        });
+      }
+    } else {
+      // Update to preset dimensions
+      const dims = CANVAS_DIMENSIONS[p];
+      updateProject({
+        canvasWidth: dims.width,
+        canvasHeight: dims.height,
+        aspectRatio: p,
+      });
+    }
   };
 
   // Derive UI values from clock state
@@ -547,7 +698,7 @@ const ProgramPreview: React.FC = () => {
       <div className="flex items-center px-4 h-10 shrink-0 gap-2">
         <span className="text-[13px] font-semibold text-text-primary tracking-tight">Program Preview</span>
         <span className="text-[13px] text-text-muted">— Timeline</span>
-        <button onClick={() => setShowTelemetry((s) => !s)} className={cn("ml-auto px-2 h-6 rounded text-[10px] font-medium transition-colors", showTelemetry ? "bg-accent/20 text-accent" : "text-text-muted hover:text-text-primary hover:bg-white/6")} title="Toggle render telemetry">
+        <button onClick={() => setShowTelemetry((s) => !s)} className={cn("ml-auto px-2 h-6 rounded text-[10px] font-medium transition-colors", showTelemetry ? "bg-accent/20 text-accent" : "text-text-muted hover:text-text-primary hover:bg-white/6")} title="Toggle render telemetry" aria-label="Toggle render telemetry">
           Stats
         </button>
       </div>
@@ -576,25 +727,27 @@ const ProgramPreview: React.FC = () => {
                     CRITICAL: Do NOT use width: 0, height: 0, or opacity: 0. 
                     Browsers throttle decoding for invisible videos, destroying A/V sync.
                     Keep them 1x1 pixel with near-zero opacity to force hardware decoding. */}
-                <div className="absolute top-0 left-0 pointer-events-none -z-10" style={{ width: "1px", height: "1px", opacity: 0.001, overflow: "hidden" }}>
+                <div className="absolute top-0 left-0 pointer-events-none -z-10" style={{ width: "16px", height: "16px", opacity: 0.01, visibility: "hidden", overflow: "hidden" }}>
                   {scene.visualLayers
                     .filter((l): l is EvaluatedMediaLayer => l.layerType === "media" && l.mediaType === "video")
-                    .map((layer) => (
-                      <video
-                        key={`audio-${layer.clipId}-${layer.mediaId}`}
-                        data-media-id={layer.mediaId}
-                        data-clip-id={layer.clipId}
-                        ref={(el) => {
-                          videoRefs.current[`${layer.clipId}-${layer.mediaId}`] = el;
-                        }}
-                        src={layer.sourcePath}
-                        muted={isMuted || volume === 0}
-                        playsInline
-                        preload="auto"
-                        onLoadedMetadata={() => setPreviewVideoReadyTick((n) => n + 1)}
-                        className="w-full h-full"
-                      />
-                    ))}
+                    .map((layer) => {
+                      return (
+                        <video
+                          key={`audio-${layer.clipId}-${layer.mediaId}`}
+                          data-media-id={layer.mediaId}
+                          data-clip-id={layer.clipId}
+                          ref={(el) => {
+                            videoRefs.current[`${layer.clipId}-${layer.mediaId}`] = el;
+                          }}
+                          src={layer.sourcePath}
+                          muted={isMuted || volume === 0}
+                          playsInline
+                          preload="auto"
+                          onLoadedMetadata={() => setPreviewVideoReadyTick((n) => n + 1)}
+                          className="w-full h-full"
+                        />
+                      );
+                    })}
                 </div>
               </>
             ) : (
@@ -687,6 +840,22 @@ const ProgramPreview: React.FC = () => {
           </div>
         </div>
 
+        {/* Professional empty state - shows sequence context when no clips. Applied same width and height has canvas, so that it's always fit-in professionally*/}
+        {clips.length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none mx-auto" style={{ width: vw, height: vh }}>
+            <div className="text-center space-y-3">
+              <div className="text-sm font-medium text-text-muted">No clips in sequence</div>
+              <div className="text-xs text-text-muted/80 space-y-1 font-mono">
+                <div>
+                  {canvasWidth}×{canvasHeight} • {frameRate}fps
+                </div>
+                <div className="text-text-muted/60">Rec.709</div>
+              </div>
+              <div className="text-xs text-text-muted/70 mt-4">Import media or drag clips to timeline</div>
+            </div>
+          </div>
+        )}
+
         {/* Telemetry Overlay */}
         {showTelemetry && telemetryStats && (
           <div className="absolute top-4 left-4 z-20 bg-black/80 backdrop-blur-sm rounded-lg p-3 text-xs font-mono text-white/90 space-y-1 border border-white/10">
@@ -723,41 +892,16 @@ const ProgramPreview: React.FC = () => {
         )}
       </div>
 
-      {/* ── Scrub Bar (thin, edge-to-edge) ────────────────────────── */}
-      <div
-        className="h-[5px] w-full cursor-pointer group relative shrink-0"
-        onMouseDown={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          const doSeek = (clientX: number) => {
-            const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-            seek(ratio * duration);
-          };
-          doSeek(e.clientX);
-          const handleMove = (moveEvent: MouseEvent) => doSeek(moveEvent.clientX);
-          const handleUp = () => {
-            window.removeEventListener("mousemove", handleMove);
-            window.removeEventListener("mouseup", handleUp);
-          };
-          window.addEventListener("mousemove", handleMove);
-          window.addEventListener("mouseup", handleUp);
-        }}
-      >
-        <div className="absolute inset-0 bg-surface" />
-        <div className="absolute top-0 bottom-0 left-0 bg-accent" style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }} />
-        <div className="absolute top-1/2 -translate-y-1/2 w-[10px] h-[10px] rounded-full bg-accent border-2 border-white shadow-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" style={{ left: `calc(${duration > 0 ? (currentTime / duration) * 100 : 0}% - 5px)` }} />
-      </div>
-
-      {/* ── Bottom Controls ────────────────────────────────────────── */}
-      <div className="flex items-center h-10 px-3 shrink-0 relative">
-        {/* Timecodes */}
-        <div className="flex items-center gap-1">
-          <div className="flex items-baseline gap-1 select-none w-[120px]" style={{ fontVariantNumeric: "tabular-nums" }}>
-            <span className="text-[12px] font-medium text-accent">{formatTime(currentTime)}</span>
-            <span className="text-[11px] text-text-muted/50">/</span>
-            <span className="text-[12px] text-text-muted">{formatTime(duration)}</span>
-          </div>
-
-          {/* Speed menu */}
+      <PreviewTransport
+        currentTime={currentTime}
+        duration={duration}
+        isPlaying={isPlaying}
+        onPlayPause={() => (isPlaying ? pause() : play())}
+        onSeek={seek}
+        formatTime={formatTime}
+        onStepBack={() => seek(Math.max(0, currentTime - step))}
+        onStepForward={() => seek(Math.min(duration, currentTime + step))}
+        leftActions={
           <div className="relative" ref={speedMenuRef}>
             <button onClick={() => setSpeedMenuOpen((o) => !o)} className="flex items-center gap-1 px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title="Playback speed" aria-expanded={speedMenuOpen}>
               <span className="max-w-18 truncate">{playbackSpeed}x</span>
@@ -786,76 +930,44 @@ const ProgramPreview: React.FC = () => {
               </div>
             )}
           </div>
-        </div>
+        }
+        rightActions={
+          <>
+            {/* Aspect menu */}
+            <div className="relative shrink-0" ref={aspectMenuRef}>
+              <button onClick={() => setAspectMenuOpen((o) => !o)} className="flex items-center gap-1 px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title="Preview aspect ratio" aria-expanded={aspectMenuOpen}>
+                <span className="max-w-18 truncate">{PREVIEW_ASPECT_LABEL[previewAspectPreset]}</span>
+                <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+              </button>
+              {aspectMenuOpen && (
+                <div className="absolute bottom-full right-0 z-50 mb-1 w-[200px] overflow-hidden rounded-lg border border-border bg-surface py-1 text-text-primary shadow-xl" role="listbox">
+                  <div className="px-1">
+                    <AspectMenuRow preset="original" selected={previewAspectPreset} onSelect={selectAspectPreset} icon={<PreviewAspectShapeIcon widthOverHeight={canvasWidth / Math.max(1, canvasHeight)} />} />
+                  </div>
+                  <div className="my-1 h-px bg-border" />
+                  <div className="px-1">
+                    {(["16:9", "9:16", "1:1", "4:5"] as const).map((p) => (
+                      <AspectMenuRow key={p} preset={p} selected={previewAspectPreset} onSelect={selectAspectPreset} icon={<PreviewAspectShapeIcon widthOverHeight={PREVIEW_ASPECT_RATIO[p]!} />} />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
 
-        {/* Center play controls */}
-        <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-1">
-          <button onClick={() => seek(Math.max(0, currentTime - step))} className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/6 transition-colors text-text-muted hover:text-text-primary" title="Previous frame">
-            <SkipBack className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={() => {
-              isPlaying ? pause() : play();
-            }}
-            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/6 transition-colors text-text-primary mx-1"
-            title={isPlaying ? "Pause" : "Play"}
-          >
-            {isPlaying ? <Pause className="w-[18px] h-[18px]" /> : <Play className="w-[18px] h-[18px] ml-0.5" />}
-          </button>
-          <button onClick={() => seek(Math.min(duration, currentTime + step))} className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/6 transition-colors text-text-muted hover:text-text-primary" title="Next frame">
-            <SkipForward className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        {/* Right side actions */}
-        <div className="ml-auto flex items-center gap-2">
-          {/* Aspect menu */}
-          <div className="relative shrink-0" ref={aspectMenuRef}>
-            <button onClick={() => setAspectMenuOpen((o) => !o)} className="flex items-center gap-1 px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title="Preview aspect ratio" aria-expanded={aspectMenuOpen}>
-              <span className="max-w-18 truncate">{PREVIEW_ASPECT_LABEL[previewAspectPreset]}</span>
-              <ChevronDown className="h-3 w-3 shrink-0 opacity-70" />
+            <button onClick={() => setPreviewScaleMode((m) => (m === "fit" ? "fill" : "fit"))} className="w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title={previewScaleMode === "fit" ? "Fill preview — scale to cover (crop edges)" : "Fit preview — show entire frame (letterbox)"} aria-label={previewScaleMode === "fit" ? "Fill preview" : "Fit preview"}>
+              {previewScaleMode === "fit" ? <Expand className="w-3.5 h-3.5" /> : <Shrink className="w-3.5 h-3.5" />}
             </button>
-            {aspectMenuOpen && (
-              <div className="absolute bottom-full right-0 z-50 mb-1 w-[220px] overflow-hidden rounded-lg border border-border bg-surface py-1 text-text-primary shadow-xl" role="listbox">
-                <div className="px-1">
-                  <AspectMenuRow preset="original" selected={previewAspectPreset} onSelect={selectAspectPreset} icon={<PreviewAspectShapeIcon widthOverHeight={canvasWidth / Math.max(1, canvasHeight)} />} />
-                  <AspectMenuRow preset="custom" selected={previewAspectPreset} onSelect={selectAspectPreset} disabled icon={<span className="w-[22px]" />} />
-                </div>
-                <div className="my-1 h-px bg-border" />
-                <div className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted">Landscape</div>
-                <div className="px-1">
-                  {landscapePresets.map((p) => (
-                    <AspectMenuRow key={p} preset={p} selected={previewAspectPreset} onSelect={selectAspectPreset} icon={<PreviewAspectShapeIcon widthOverHeight={PREVIEW_ASPECT_RATIO[p]!} />} />
-                  ))}
-                </div>
-                <div className="my-1 h-px bg-border" />
-                <div className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted">Portrait</div>
-                <div className="px-1">
-                  {portraitPresets.map((p) => (
-                    <AspectMenuRow key={p} preset={p} selected={previewAspectPreset} onSelect={selectAspectPreset} icon={<PreviewAspectShapeIcon widthOverHeight={PREVIEW_ASPECT_RATIO[p]!} />} />
-                  ))}
-                </div>
-                <div className="my-1 h-px bg-border" />
-                <div className="px-1">
-                  <AspectMenuRow preset="1:1" selected={previewAspectPreset} onSelect={selectAspectPreset} icon={<PreviewAspectShapeIcon widthOverHeight={1} />} />
-                </div>
-              </div>
-            )}
-          </div>
 
-          <button onClick={() => setPreviewScaleMode((m) => (m === "fit" ? "fill" : "fit"))} className="w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title={previewScaleMode === "fit" ? "Fill preview — scale to cover (crop edges)" : "Fit preview — show entire frame (letterbox)"}>
-            {previewScaleMode === "fit" ? <Expand className="w-3.5 h-3.5" /> : <Shrink className="w-3.5 h-3.5" />}
-          </button>
+            <div className="w-px h-4 bg-white/10 mx-1" />
 
-          <div className="w-px h-4 bg-white/10 mx-1" />
+            <button onClick={() => setIsMuted((m) => !m)} className="w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title={isMuted ? "Unmute" : "Mute"} aria-label={isMuted ? "Unmute audio" : "Mute audio"}>
+              {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+            </button>
 
-          <button onClick={() => setIsMuted((m) => !m)} className="w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title={isMuted ? "Unmute" : "Mute"}>
-            {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-          </button>
-
-          <input type="range" min="0" max="100" value={volume} onChange={(e) => setVolume(Number(e.target.value))} className="w-16 h-1 bg-surface-raised rounded-full appearance-none outline-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent cursor-pointer" />
-        </div>
-      </div>
+            <input type="range" min="0" max="100" value={volume} onChange={(e) => setVolume(Number(e.target.value))} className="w-16 h-1 bg-surface-raised rounded-full appearance-none outline-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent cursor-pointer" />
+          </>
+        }
+      />
     </div>
   );
 };

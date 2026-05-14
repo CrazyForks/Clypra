@@ -70,6 +70,7 @@ export function ClipFilmstrip({ clip, mediaAsset, clipWidthPx, pixelsPerSecond, 
   // ── RasterSurface lifecycle ───────────────────────────────────────────────
   useEffect(() => {
     if (!canvasRef.current) return;
+
     surfaceRef.current = createRasterSurface(canvasRef.current);
     return () => {
       surfaceRef.current?.dispose();

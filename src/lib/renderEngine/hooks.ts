@@ -5,22 +5,13 @@
  * to consume render engine state. Components must NOT import RenderRuntime,
  * RenderScheduler, or any policy module directly for orchestration.
  *
- * Pattern: hooks subscribe to RenderRuntime state via renderEngineStore.
+ * Pattern: hooks access RenderRuntime via useRenderRuntime() hook from ProjectSession.
  */
 
-import { useEffect, useRef, useState } from 'react';
-import { useRenderEngineStore } from '../../store/renderEngineStore';
-import {
-  type RenderState,
-  type RenderArtifact,
-  type RenderEpochId,
-  SpatialTier,
-  TemporalTier,
-  InteractionState,
-  VelocityState,
-  RendererMode,
-} from './types';
-import { computeEpochId } from './epoch';
+import { useEffect, useRef, useState } from "react";
+import { useRenderRuntime } from "../../hooks/useRenderRuntime";
+import { type RenderState, type RenderArtifact, type RenderEpochId, SpatialTier, TemporalTier, InteractionState, VelocityState, RendererMode } from "./types";
+import { computeEpochId } from "./epoch";
 
 // ─── Default state (no runtime initialised yet) ───────────────────────────────
 
@@ -28,7 +19,7 @@ function defaultRenderState(clipId: string): RenderState {
   return {
     clipId,
     currentTier: { spatialTier: SpatialTier.L0, temporalTier: TemporalTier.L0 },
-    targetTier:  { spatialTier: SpatialTier.L0, temporalTier: TemporalTier.L0 },
+    targetTier: { spatialTier: SpatialTier.L0, temporalTier: TemporalTier.L0 },
     epochId: computeEpochId({
       clipId,
       clipVersion: 0,
@@ -56,7 +47,7 @@ function defaultRenderState(clipId: string): RenderState {
  *   const renderState = useRenderState(clip.id);
  */
 export function useRenderState(clipId: string): RenderState {
-  const runtime = useRenderEngineStore(s => s.runtime);
+  const runtime = useRenderRuntime();
   const [state, setState] = useState<RenderState>(() => defaultRenderState(clipId));
   const unsubRef = useRef<(() => void) | null>(null);
 
@@ -67,13 +58,14 @@ export function useRenderState(clipId: string): RenderState {
     }
 
     runtime.registerClip(clipId);
-    unsubRef.current = runtime.subscribe(clipId, newState => {
+    unsubRef.current = runtime.subscribe(clipId, (newState) => {
       setState(newState);
     });
 
     return () => {
       unsubRef.current?.();
       unsubRef.current = null;
+      runtime.unregisterClip(clipId);
     };
   }, [runtime, clipId]);
 

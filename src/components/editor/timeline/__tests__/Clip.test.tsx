@@ -175,7 +175,7 @@ describe("Clip Component", () => {
       renderClip(clip, mediaAsset);
 
       const clipElement = screen.getByTestId("clip-clip-1");
-      expect(clipElement.className).toContain("bg-[#153840]");
+      expect(clipElement.className).toContain("bg-timeline-clip-audio");
     });
   });
 

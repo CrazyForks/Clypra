@@ -51,7 +51,28 @@ class MockOffscreenCanvas {
       restore: vi.fn(),
       translate: vi.fn(),
       rotate: vi.fn(),
+      scale: vi.fn(),
       getImageData: vi.fn(() => new MockImageData(width, height)),
+      measureText: vi.fn((text: string) => ({
+        width: text.length * 10,
+        actualBoundingBoxLeft: 0,
+        actualBoundingBoxRight: text.length * 10,
+        actualBoundingBoxAscent: 12,
+        actualBoundingBoxDescent: 3,
+        fontBoundingBoxAscent: 15,
+        fontBoundingBoxDescent: 5,
+        alphabeticBaseline: 0,
+      })),
+      clearRect: vi.fn(),
+      beginPath: vi.fn(),
+      closePath: vi.fn(),
+      rect: vi.fn(),
+      clip: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      arc: vi.fn(),
+      stroke: vi.fn(),
+      fill: vi.fn(),
     };
   }
 

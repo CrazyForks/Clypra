@@ -1,22 +1,22 @@
-import React, { useRef, useEffect, useState, useCallback, RefObject } from "react";
-import { FolderOpen } from "lucide-react";
+import React, { useRef, useEffect, useState, useCallback, useMemo, RefObject } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { useTimelineStore, getInsertIndexForNewTrack } from "@/store/timelineStore";
+import { useProjectStore } from "@/store/projectStore";
+import { useUIStore } from "@/store/uiStore";
+import { usePlayback } from "@/hooks/usePlayback";
+import type { VideoMetadata } from "@/types";
+import { createClipFromAsset, getTimelineViewportEnd } from "@/lib/timelineClip";
+import { useRenderRuntime } from "@/hooks/useRenderRuntime";
+import { TIMELINE_MAX_PPS, TIMELINE_MIN_PPS } from "@/lib/timelineZoom";
+import { suspendAutoSave, resumeAutoSave } from "@/store/middleware/autoSaveMiddleware";
+import { generateId } from "@/lib/id";
 import { TimelineToolbar } from "./TimelineToolbar";
 import { TimelineRuler } from "./TimelineRuler";
 import { TrackList } from "./TrackList";
 import { Track } from "./Track";
 import { Playhead } from "./Playhead";
-import { useTimelineStore, getInsertIndexForNewTrack } from "../../../store/timelineStore";
-import { useProjectStore } from "../../../store/projectStore";
-import { useUIStore } from "../../../store/uiStore";
-import { usePlayback } from "../../../hooks/usePlayback";
-// import { useTimelineAutoScroll } from "../../../hooks/useTimelineAutoScroll";
-import type { VideoMetadata } from "../../../types";
-import { createClipFromAsset, getTimelineViewportEnd } from "../../../lib/timelineClip";
-import { useRenderEngineStore } from "../../../store/renderEngineStore";
-import { TIMELINE_MAX_PPS, TIMELINE_MIN_PPS } from "../../../lib/timelineZoom";
 
 /** Multiplier on normalized wheel delta (pixels); higher = stronger zoom per tick. */
 const WHEEL_ZOOM_SENSITIVITY = 0.006;
@@ -85,7 +85,7 @@ function resolveTrackAtClientY(container: HTMLElement, tracks: Array<{ id: strin
 }
 
 export const Timeline: React.FC = () => {
-  const { tracks, clips, pixelsPerSecond, scrollLeft, setScrollLeft, getTimelineEndTime, addClip, addTrack, insertTrackAt, insertClipAtIndex, getTrackClips, updateClip, normalizeTrack, removeEmptyNonMainTracks } = useTimelineStore();
+  const { tracks, clips, pixelsPerSecond, scrollLeft, setScrollLeft, getTimelineEndTime, addClip, addTrack, insertTrackAt, insertClipAtIndex, updateClip, normalizeTrack, removeEmptyNonMainTracks, beginBatch, endBatch } = useTimelineStore();
 
   const { mediaAssets, addMediaAsset } = useProjectStore();
   const { previewMode, exitSourceMode, clearSelection } = useUIStore();
@@ -95,7 +95,7 @@ export const Timeline: React.FC = () => {
   const isProcessingDropRef = useRef(false);
 
   // ── RenderRuntime event wiring ──────────────────────────────────────────────
-  const runtime = useRenderEngineStore((s) => s.runtime);
+  const runtime = useRenderRuntime();
 
   // Attach scroll/pointer listeners to the timeline scroll container
   useEffect(() => {
@@ -140,22 +140,40 @@ export const Timeline: React.FC = () => {
   const dragStateRef = useRef(dragState);
   dragStateRef.current = dragState;
 
+  // ── Lookup maps: O(n) once per clip/track change, O(1) during drag ──
+  const clipMapRef = useRef<Map<string, (typeof clips)[number]>>(new Map());
+  const trackClipsMapRef = useRef<Map<string, typeof clips>>(new Map());
+
+  useMemo(() => {
+    clipMapRef.current = new Map(clips.map((c) => [c.id, c]));
+
+    const tcMap = new Map<string, typeof clips>();
+    for (const track of tracks) {
+      tcMap.set(
+        track.id,
+        clips.filter((c) => c.trackId === track.id).sort((a, b) => a.startTime - b.startTime),
+      );
+    }
+    trackClipsMapRef.current = tcMap;
+  }, [clips, tracks]);
+
   // Handle clip drag with gap engine
   const handleClipDragStart = useCallback(
     (clipId: string, startX: number, startY: number) => {
-      const clip = clips.find((c) => c.id === clipId);
+      const clip = clipMapRef.current.get(clipId);
       if (!clip) return;
+      suspendAutoSave();
       const selectedClipIds = useUIStore.getState().selectedClipIds;
       const draggedClipIds = selectedClipIds.includes(clipId) ? selectedClipIds : [clipId];
 
       // Find clip's index in its track
-      const trackClips = getTrackClips(clip.trackId);
+      const trackClips = trackClipsMapRef.current.get(clip.trackId) ?? [];
       const originalIndex = trackClips.findIndex((c) => c.id === clipId);
       const originalPlacements: Record<string, { trackId: string; startTime: number; index: number }> = {};
       for (const draggedId of draggedClipIds) {
-        const dragged = clips.find((c) => c.id === draggedId);
+        const dragged = clipMapRef.current.get(draggedId);
         if (!dragged) continue;
-        const draggedTrackClips = getTrackClips(dragged.trackId);
+        const draggedTrackClips = trackClipsMapRef.current.get(dragged.trackId) ?? [];
         originalPlacements[dragged.id] = {
           trackId: dragged.trackId,
           startTime: dragged.startTime,
@@ -168,6 +186,7 @@ export const Timeline: React.FC = () => {
       const originalLeftPx = Math.round(clip.startTime * pps);
 
       const otherClips = trackClips.filter((c) => c.id !== clipId);
+      beginBatch();
       let currentTime = 0;
       otherClips.forEach((c) => {
         updateClip(c.id, { startTime: currentTime });
@@ -176,6 +195,7 @@ export const Timeline: React.FC = () => {
 
       const tailTime = currentTime;
       updateClip(clipId, { startTime: tailTime });
+      endBatch();
       const leftNewPx = Math.round(tailTime * pps);
       const visualLeftAnchorDelta = originalLeftPx - leftNewPx;
 
@@ -210,7 +230,7 @@ export const Timeline: React.FC = () => {
       dragStateRef.current = nextDragState;
       setDragState(nextDragState);
     },
-    [clips, getTrackClips, updateClip],
+    [updateClip, beginBatch, endBatch],
   );
 
   const handleClipDragMove = useCallback((clipId: string, _deltaX: number, _deltaY: number, clientX: number, clientY: number) => {
@@ -226,11 +246,14 @@ export const Timeline: React.FC = () => {
     const offsetX = contentDeltaPx + ds.visualLeftAnchorDelta;
     const offsetY = clientY - ds.pointerClientYStart;
 
-    const { clips: liveClips, tracks: liveTracks, getTrackClips, pixelsPerSecond: pps } = useTimelineStore.getState();
-    const clip = liveClips.find((c) => c.id === clipId);
+    const { clips: liveClips, tracks: liveTracks, pixelsPerSecond: pps } = useTimelineStore.getState();
+    const clip = clipMapRef.current.get(clipId) ?? liveClips.find((c) => c.id === clipId);
     if (!clip) return;
 
     const { targetTrackId, willCreateNewTrack, newTrackPosition } = resolveTrackAtClientY(container, liveTracks, clientY);
+
+    // Helper: only trigger re-render when visual feedback fields change
+    const shouldRerender = (next: typeof ds) => ds.targetTrackId !== next.targetTrackId || ds.insertionIndex !== next.insertionIndex || ds.isInvalidPosition !== next.isInvalidPosition || ds.willCreateNewTrack !== next.willCreateNewTrack || ds.newTrackPosition !== next.newTrackPosition;
 
     // If creating new track, show indicator and skip gap calculation
     if (willCreateNewTrack) {
@@ -247,7 +270,7 @@ export const Timeline: React.FC = () => {
         newTrackPosition,
       };
       dragStateRef.current = next;
-      setDragState(next);
+      if (shouldRerender(next)) setDragState(next);
       return;
     }
 
@@ -269,42 +292,47 @@ export const Timeline: React.FC = () => {
         newTrackPosition: null,
       };
       dragStateRef.current = next;
-      setDragState(next);
+      if (shouldRerender(next)) setDragState(next);
       return;
     }
 
     if (!targetTrackId) {
       const next = { ...ds, offsetX, offsetY };
       dragStateRef.current = next;
-      setDragState(next);
+      if (shouldRerender(next)) setDragState(next);
       return;
     }
 
     const containerRect = cr;
-    const trackClips = getTrackClips(targetTrackId).filter((c) => c.id !== clipId);
+    // O(1) map lookup instead of O(n) filter + sort
+    const allTrackClips = trackClipsMapRef.current.get(targetTrackId) ?? [];
+    const trackClips = allTrackClips.filter((c) => c.id !== clipId);
     const pointerX = clientX - containerRect.left + container.scrollLeft;
 
-    let insertionIndex = 0;
-    let accumulatedX = 0;
-
+    // Build prefix sums for binary search over clip midpoints
+    const prefixWidths = new Float64Array(trackClips.length + 1);
     for (let i = 0; i < trackClips.length; i++) {
-      const clipWidth = trackClips[i].duration * pps;
-      const clipMidpoint = accumulatedX + clipWidth / 2;
-
-      if (pointerX < clipMidpoint) {
-        insertionIndex = i;
-        break;
-      }
-
-      accumulatedX += clipWidth;
-      insertionIndex = i + 1;
+      prefixWidths[i + 1] = prefixWidths[i] + trackClips[i].duration * pps;
     }
 
+    // Binary search for insertion index: find first clip whose midpoint > pointerX
+    let lo = 0;
+    let hi = trackClips.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const clipMidpoint = prefixWidths[mid] + (trackClips[mid].duration * pps) / 2;
+      if (pointerX < clipMidpoint) {
+        hi = mid;
+      } else {
+        lo = mid + 1;
+      }
+    }
+    const insertionIndex = lo;
+
+    // Gap start time = sum of durations before insertion point
     let gapStartTime = 0;
     for (let i = 0; i < insertionIndex; i++) {
-      if (i < trackClips.length) {
-        gapStartTime += trackClips[i].duration;
-      }
+      gapStartTime += trackClips[i].duration;
     }
 
     const next = {
@@ -320,7 +348,7 @@ export const Timeline: React.FC = () => {
       newTrackPosition: null,
     };
     dragStateRef.current = next;
-    setDragState(next);
+    if (shouldRerender(next)) setDragState(next);
   }, []);
 
   const handleClipDragEnd = useCallback(
@@ -330,6 +358,7 @@ export const Timeline: React.FC = () => {
 
       const sourceTrackIds = Array.from(new Set(Object.values(dragSnapshot.originalPlacements).map((p) => p.trackId)));
       const restoreDraggedToOriginal = () => {
+        beginBatch();
         const affectedTracks = new Set<string>();
         dragSnapshot.draggedClipIds.forEach((id) => {
           const placement = dragSnapshot.originalPlacements[id];
@@ -341,12 +370,14 @@ export const Timeline: React.FC = () => {
           });
         });
         affectedTracks.forEach((trackId) => normalizeTrack(trackId));
+        endBatch();
       };
 
       const clip = useTimelineStore.getState().clips.find((c) => c.id === clipId);
       if (!clip) {
         dragStateRef.current = null;
         setDragState(null);
+        resumeAutoSave();
         return;
       }
       // Note: Main track protection removed - timeline is now time-centric, not track-centric
@@ -373,6 +404,7 @@ export const Timeline: React.FC = () => {
 
         dragStateRef.current = null;
         setDragState(null);
+        resumeAutoSave();
         return;
       }
 
@@ -396,6 +428,7 @@ export const Timeline: React.FC = () => {
             return placement ? -placement.startTime : 0;
           }),
         );
+        beginBatch();
         const affectedTracks = new Set<string>();
         dragSnapshot.draggedClipIds.forEach((id) => {
           const placement = dragSnapshot.originalPlacements[id];
@@ -407,13 +440,15 @@ export const Timeline: React.FC = () => {
           });
         });
         affectedTracks.forEach((trackId) => normalizeTrack(trackId));
+        endBatch();
       }
       removeEmptyNonMainTracks(sourceTrackIds);
 
       dragStateRef.current = null;
       setDragState(null);
+      resumeAutoSave();
     },
-    [insertClipAtIndex, updateClip, insertTrackAt, normalizeTrack, removeEmptyNonMainTracks],
+    [insertClipAtIndex, updateClip, insertTrackAt, normalizeTrack, removeEmptyNonMainTracks, beginBatch, endBatch],
   );
 
   // Handle ESC key to cancel drag
@@ -423,6 +458,7 @@ export const Timeline: React.FC = () => {
       const ds = dragStateRef.current;
       if (!ds) return;
 
+      beginBatch();
       const affectedTracks = new Set<string>();
       ds.draggedClipIds.forEach((id) => {
         const placement = ds.originalPlacements[id];
@@ -434,14 +470,16 @@ export const Timeline: React.FC = () => {
         });
       });
       affectedTracks.forEach((trackId) => normalizeTrack(trackId));
+      endBatch();
 
       dragStateRef.current = null;
       setDragState(null);
+      resumeAutoSave();
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [normalizeTrack, updateClip]);
+  }, [normalizeTrack, updateClip, beginBatch, endBatch]);
 
   // Handle Delete/Backspace key to remove selected clips
   useEffect(() => {
@@ -462,11 +500,12 @@ export const Timeline: React.FC = () => {
       // Timeline validation will inform about gaps, but never blocks deletion
       // The compositor handles rendering gracefully even with empty tracks
 
-      // Remove each selected clip
+      // Remove each selected clip (batched — single epoch increment)
       const store = useTimelineStore.getState();
-      const { removeClip, normalizeTrack } = useTimelineStore.getState();
+      const { removeClip, normalizeTrack, beginBatch: batchStart, endBatch: batchEnd } = store;
       const affectedTracks = new Set<string>();
 
+      batchStart();
       selectedClipIds.forEach((clipId) => {
         const clip = store.clips.find((c) => c.id === clipId);
         if (clip) {
@@ -477,6 +516,7 @@ export const Timeline: React.FC = () => {
 
       // Normalize affected tracks to close gaps
       affectedTracks.forEach((trackId) => normalizeTrack(trackId));
+      batchEnd();
 
       // Clear selection after deletion
       useUIStore.getState().clearSelection();
@@ -560,8 +600,9 @@ export const Timeline: React.FC = () => {
       const localX = pendingClientX - rect.left;
       const scrollLeftDom = container.scrollLeft;
 
-      // Use viewport end for zoom anchoring (includes 10s padding for UX)
-      const currentViewportEnd = getTimelineViewportEnd(duration);
+      // ✅ Read duration fresh from state (not captured in closure)
+      const currentDuration = getTimelineEndTime();
+      const currentViewportEnd = getTimelineViewportEnd(currentDuration);
       let anchorTime = (scrollLeftDom + localX) / oldPps;
       anchorTime = Math.max(0, Math.min(anchorTime, currentViewportEnd));
 
@@ -592,13 +633,33 @@ export const Timeline: React.FC = () => {
       container.removeEventListener("wheel", onWheel);
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [duration]);
+  }, []); // ✅ Effect runs once, reads fresh state imperatively
 
-  // ✅ Set playback duration to actual content end (not viewport padding)
+  // ✅ Set playback duration - maintain minimum timeline extent even with no clips
+  // Professional NLE principle: timeline is a persistent temporal coordinate system
   useEffect(() => {
     const contentEnd = getTimelineEndTime();
-    setDuration(contentEnd);
-  }, [clips, getTimelineEndTime, setDuration]);
+    // Minimum 10 seconds - timeline exists independently of clips
+    // This allows:
+    // - Playhead to remain valid at any position
+    // - Insert/paste operations at any time
+    // - Markers without clips
+    // - Professional "empty timeline" workflow
+    const MIN_TIMELINE_DURATION = 10;
+    const timelineDuration = Math.max(contentEnd, MIN_TIMELINE_DURATION);
+    setDuration(timelineDuration);
+  }, [clips]);
+
+  // ✅ CRITICAL: Clamp playhead if it's now beyond valid timeline bounds
+  // This handles the case where:
+  // - User deletes a long clip while playhead is near its end
+  // - Timeline duration shrinks
+  // - Playhead must snap to new timeline end (professional behavior)
+  useEffect(() => {
+    if (currentTime > duration) {
+      seek(duration);
+    }
+  }, [duration, currentTime, seek]);
 
   // Auto-scroll during playback: bulletproof viewport tracking with strict invariants
   useEffect(() => {
@@ -682,7 +743,7 @@ export const Timeline: React.FC = () => {
               const posterFrame: string | undefined = type === "video" ? ((await invoke("extract_poster_frame", { path: filePath, time: 0.0 }).catch(() => undefined)) as string | undefined) : undefined;
 
               asset = {
-                id: `asset-${Date.now()}-${Math.random()}`,
+                id: generateId("asset"),
                 name: filename,
                 path: filePath,
                 type,
@@ -694,7 +755,7 @@ export const Timeline: React.FC = () => {
               };
             } else {
               asset = {
-                id: `asset-${Date.now()}-${Math.random()}`,
+                id: generateId("asset"),
                 name: filename,
                 path: filePath,
                 type: "image" as const,
@@ -731,6 +792,7 @@ export const Timeline: React.FC = () => {
           }
         } catch (error) {
           console.error(`[Timeline] Failed to import ${filePath}:`, error);
+          useProjectStore.getState().showToast(`Failed to import ${filePath.split("/").pop() || "file"}`, "error");
         }
       }
     },
@@ -829,14 +891,8 @@ export const Timeline: React.FC = () => {
         <TrackList />
 
         <div ref={containerRef} onScroll={handleScroll} onClick={seekFromPointer} id="timeline-tracks-container" className={`flex-1 overflow-x-auto overflow-y-auto scrollbar-thin px-1 relative transition-colors border-l border-[#2b3442] ${isDraggingOver ? "bg-cyan-500/10 ring-2 ring-cyan-500/50 ring-inset" : ""}`}>
-          {clips.length === 0 && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="flex items-center gap-3 text-[#6b7280] pointer-events-none">
-                <FolderOpen className="w-5 h-5" />
-                <span className="text-sm">Drag material here and start to create</span>
-              </div>
-            </div>
-          )}
+          {/* Minimal empty state hint - brutally subtle, preserves workspace identity */}
+          {clips.length === 0 && <div className="absolute bottom-3 left-3 text-[10px] text-white pointer-events-none font-mono">Drop media here • I to import</div>}
 
           <div
             style={{
@@ -861,7 +917,7 @@ export const Timeline: React.FC = () => {
                 />
               )}
 
-              {tracks.map((track, index) => (
+              {tracks.map((track) => (
                 <React.Fragment key={track.id}>
                   <Track
                     track={track}

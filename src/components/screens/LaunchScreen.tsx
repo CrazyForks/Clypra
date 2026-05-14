@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { Film, Image as ImageIcon, Plus, Trash2, Clock, ChevronRight, Sparkles } from "lucide-react";
-import { Button } from "../ui/Button";
-import { Modal } from "../ui/Modal";
-import { useProjectStore } from "../../store/projectStore";
-import { useSettingsStore } from "../../store/settingsStore";
-import type { AspectRatio, MediaAsset, Project } from "../../types";
+import { Film, Image as ImageIcon, Plus, Trash2, Pencil, MoreHorizontal, Clock, ChevronRight, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { useProjectStore } from "@/store/projectStore";
+import { useSettingsStore } from "@/store/settingsStore";
+import type { AspectRatio, MediaAsset, Project } from "@/types";
 
 interface LaunchScreenProps {
   onProjectCreate: (name: string, aspectRatio: AspectRatio, frameRate: 24 | 30 | 60) => void;
@@ -29,9 +29,14 @@ const getProjectThumbnail = (project: Project) => {
 };
 
 export const LaunchScreen: React.FC<LaunchScreenProps> = ({ onProjectCreate, onProjectOpen }) => {
-  const { recentProjects, setRecentProjects, deleteProject } = useProjectStore();
+  const { recentProjects, setRecentProjects, deleteProject, renameProject } = useProjectStore();
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [projectToRename, setProjectToRename] = useState<Project | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const menuRef = React.useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const loadRecentProjects = async () => {
@@ -45,15 +50,9 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({ onProjectCreate, onP
           const mediaAssets: MediaAsset[] = Array.isArray(rustProject.media_assets)
             ? rustProject.media_assets.map((asset: MediaAsset) => ({
                 ...asset,
-                posterFrame: asset.posterFrame && !isExternalOrDataUrl(asset.posterFrame)
-                  ? convertFileSrc(asset.posterFrame)
-                  : asset.posterFrame,
-                coverArt: asset.coverArt && !isExternalOrDataUrl(asset.coverArt)
-                  ? convertFileSrc(asset.coverArt)
-                  : asset.coverArt,
-                path: asset.path && asset.type === "image" && !isExternalOrDataUrl(asset.path)
-                  ? convertFileSrc(asset.path)
-                  : asset.path,
+                posterFrame: asset.posterFrame && !isExternalOrDataUrl(asset.posterFrame) ? convertFileSrc(asset.posterFrame) : asset.posterFrame,
+                coverArt: asset.coverArt && !isExternalOrDataUrl(asset.coverArt) ? convertFileSrc(asset.coverArt) : asset.coverArt,
+                path: asset.path && asset.type === "image" && !isExternalOrDataUrl(asset.path) ? convertFileSrc(asset.path) : asset.path,
               }))
             : [];
           return {
@@ -85,8 +84,46 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({ onProjectCreate, onP
 
   const handleDeleteClick = (e: React.MouseEvent, project: Project) => {
     e.stopPropagation();
+    setMenuOpen(null);
     setProjectToDelete(project);
   };
+
+  const handleRenameClick = (e: React.MouseEvent, project: Project) => {
+    e.stopPropagation();
+    setMenuOpen(null);
+    setProjectToRename(project);
+    setRenameValue(project.name);
+  };
+
+  const handleConfirmRename = async () => {
+    if (!projectToRename || !renameValue.trim()) return;
+    setIsRenaming(true);
+    try {
+      await renameProject(projectToRename.id, renameValue.trim());
+      setProjectToRename(null);
+    } catch (error) {
+      console.error("Failed to rename project:", error);
+    } finally {
+      setIsRenaming(false);
+    }
+  };
+
+  const handleToggleMenu = (e: React.MouseEvent, projectId: string) => {
+    e.stopPropagation();
+    setMenuOpen((prev) => (prev === projectId ? null : projectId));
+  };
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuOpen]);
 
   const handleConfirmDelete = async () => {
     if (!projectToDelete) return;
@@ -114,18 +151,22 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({ onProjectCreate, onP
 
   return (
     <div className="w-full h-full bg-bg flex flex-col overflow-hidden">
+      {/* Native title bar area */}
+      <div className="h-[37px] select-none flex items-center justify-center bg-transparent" data-tauri-drag-region style={{ WebkitAppRegion: "drag" } as React.CSSProperties}>
+        <span className="text-xs font-semibold text-text-muted/60">Clypra</span>
+      </div>
+
       {/* ── Background gradient ─────────────────────────────────── */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
-          background:
-            "radial-gradient(ellipse 80% 50% at 50% -10%, var(--color-accent, #6c63ff) 0%, transparent 60%)",
+          background: "radial-gradient(ellipse 80% 50% at 50% -10%, var(--color-accent, #6c63ff) 0%, transparent 60%)",
           opacity: 0.06,
         }}
       />
 
       {/* ── Content ────────────────────────────────────────────── */}
-      <div className="relative z-10 flex-1 flex flex-col max-w-5xl mx-auto w-full px-6 md:px-10 py-8 overflow-y-auto scrollbar-thin">
+      <div className="relative z-10 flex-1 flex flex-col w-full px-6 md:px-10 py-8 overflow-y-auto scrollbar-thin">
         {/* Header / Brand */}
         <header className="flex items-center justify-between mb-12">
           <div className="flex items-center gap-3">
@@ -143,10 +184,9 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({ onProjectCreate, onP
         {/* ── Hero / New Project ────────────────────────────────── */}
         <section className="mb-12">
           <div
-            className="relative rounded-2xl overflow-hidden border border-white/[0.04] p-8 md:p-10 flex flex-col items-center text-center"
+            className="relative rounded-2xl overflow-hidden border border-white/4 p-8 md:p-10 flex flex-col items-center text-center"
             style={{
-              background:
-                "linear-gradient(135deg, var(--color-surface, #1a1a1a) 0%, var(--color-bg, #0f0f0f) 100%)",
+              background: "linear-gradient(135deg, var(--color-surface, #1a1a1a) 0%, var(--color-bg, #0f0f0f) 100%)",
             }}
           >
             {/* Subtle glow */}
@@ -164,18 +204,9 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({ onProjectCreate, onP
                 <Sparkles className="w-3 h-3" />
                 Create something amazing
               </div>
-              <h2 className="text-2xl md:text-3xl font-bold text-text-primary mb-2 tracking-tight">
-                Start a new project
-              </h2>
-              <p className="text-sm text-text-muted mb-6 max-w-md">
-                Begin with a 9:16 portrait canvas optimized for social media, or open a recent project below.
-              </p>
-              <Button
-                variant="default"
-                size="lg"
-                onClick={handleStartNewProject}
-                className="px-8 py-3 text-base font-semibold rounded-xl shadow-lg shadow-accent/20 hover:shadow-accent/30 transition-shadow"
-              >
+              <h2 className="text-2xl md:text-3xl font-bold text-text-primary mb-2 tracking-tight">Start a new project</h2>
+              <p className="text-sm text-text-muted mb-6 max-w-md">Begin with a 9:16 portrait canvas optimized for social media, or open a recent project below.</p>
+              <Button variant="default" size="lg" onClick={handleStartNewProject} className="px-8 py-3 text-base font-semibold rounded-xl shadow-lg shadow-accent/20 hover:shadow-accent/30 transition-shadow">
                 <Plus className="w-5 h-5 mr-2" />
                 New Project
               </Button>
@@ -201,11 +232,7 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({ onProjectCreate, onP
               {recentProjects.map((project) => {
                 const thumbnail = getProjectThumbnail(project);
                 return (
-                  <button
-                    key={project.id}
-                    onClick={() => onProjectOpen(project)}
-                    className="group relative text-left rounded-xl border border-white/[0.04] bg-surface hover:bg-surface-raised transition-all duration-200 hover:-translate-y-0.5 hover:border-white/[0.08] hover:shadow-lg hover:shadow-black/20 overflow-hidden"
-                  >
+                  <button key={project.id} onClick={() => onProjectOpen(project)} className="group relative text-left rounded-xl border border-white/[0.04] bg-surface hover:bg-surface-raised transition-all duration-200 hover:-translate-y-0.5 hover:border-white/[0.08] hover:shadow-lg hover:shadow-black/20 overflow-hidden">
                     {/* Thumbnail area */}
                     <div className="h-[170px] bg-bg flex items-center justify-center relative overflow-hidden">
                       {thumbnail ? (
@@ -222,29 +249,37 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({ onProjectCreate, onP
                       {/* Accent glow on hover */}
                       <div className="absolute inset-0 bg-accent/[0.03] opacity-0 group-hover:opacity-100 transition-opacity" />
                       {/* Aspect ratio badge */}
-                      <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-bg/75 backdrop-blur-sm text-text-muted border border-white/[0.06]">
-                        {project.aspectRatio}
-                      </span>
+                      <span className="absolute top-2 right-2 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-bg/75 backdrop-blur-sm text-text-muted border border-white/[0.06]">{project.aspectRatio}</span>
                     </div>
 
                     {/* Info */}
                     <div className="px-3.5 py-4">
-                      <h4 className="text-sm font-semibold text-text-primary truncate group-hover:text-accent-soft transition-colors">
-                        {project.name}
-                      </h4>
+                      <h4 className="text-sm font-semibold text-text-primary truncate group-hover:text-accent-soft transition-colors">{project.name}</h4>
                       <div className="flex items-center justify-between mt-2">
                         <span className="text-xs text-text-muted">{formatDate(project.createdAt)}</span>
                         <ChevronRight className="w-3.5 h-3.5 text-text-muted/30 group-hover:text-accent/60 transition-colors" />
                       </div>
                     </div>
 
-                    {/* Delete button */}
-                    <div
-                      onClick={(e) => handleDeleteClick(e, project)}
-                      className="absolute top-2 left-2 p-1.5 rounded-lg bg-bg/80 backdrop-blur-sm border border-white/[0.04] opacity-0 group-hover:opacity-100 transition-opacity hover:bg-danger/20 hover:border-danger/30 cursor-pointer"
-                      title="Delete project"
-                    >
-                      <Trash2 className="w-3.5 h-3.5 text-text-muted hover:text-danger transition-colors" />
+                    {/* More options button */}
+                    <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div onClick={(e) => handleToggleMenu(e, project.id)} className="p-1.5 rounded-lg bg-bg/80 backdrop-blur-sm border border-white/[0.04] hover:bg-surface-raised hover:border-white/[0.08] cursor-pointer transition-colors" title="More options">
+                        <MoreHorizontal className="w-3.5 h-3.5 text-text-muted" />
+                      </div>
+
+                      {/* Dropdown menu */}
+                      {menuOpen === project.id && (
+                        <div ref={menuRef} className="absolute top-full left-0 mt-1 z-50 min-w-[140px] rounded-lg border border-border bg-surface py-1 shadow-xl overflow-hidden">
+                          <button onClick={(e) => handleRenameClick(e, project)} className="w-full px-3 py-2 text-left flex items-center gap-2 text-sm text-text-primary hover:bg-surface-raised transition-colors">
+                            <Pencil className="w-3.5 h-3.5" />
+                            Rename
+                          </button>
+                          <button onClick={(e) => handleDeleteClick(e, project)} className="w-full px-3 py-2 text-left flex items-center gap-2 text-sm text-danger hover:bg-surface-raised transition-colors">
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Delete
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </button>
                 );
@@ -252,12 +287,32 @@ export const LaunchScreen: React.FC<LaunchScreenProps> = ({ onProjectCreate, onP
             </div>
           )}
         </section>
-
-        {/* Footer */}
-        <footer className="mt-8 pt-4 border-t border-white/[0.03] flex items-center justify-center">
-          <span className="text-[10px] text-text-muted/40">Built with Tauri • React • FFmpeg</span>
-        </footer>
       </div>
+
+      {/* Rename Modal */}
+      <Modal isOpen={!!projectToRename} onClose={() => setProjectToRename(null)} title="Rename Project">
+        <div className="p-5 space-y-4">
+          <input
+            type="text"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleConfirmRename();
+            }}
+            autoFocus
+            className="w-full px-3 py-2 rounded-lg bg-bg border border-border text-sm text-text-primary focus:outline-none focus:border-accent transition-colors"
+            placeholder="Project name"
+          />
+          <div className="flex gap-3 justify-end pt-2">
+            <Button variant="ghost" onClick={() => setProjectToRename(null)} disabled={isRenaming}>
+              Cancel
+            </Button>
+            <Button variant="default" onClick={handleConfirmRename} disabled={isRenaming || !renameValue.trim()}>
+              {isRenaming ? "Renaming..." : "Rename"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Delete Confirmation Modal */}
       <Modal isOpen={!!projectToDelete} onClose={() => setProjectToDelete(null)} title="Delete Project">
