@@ -21,6 +21,8 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { getPlaybackClock, type PlaybackClockState } from "../core/playback";
+import type { TransportAuthority, PlaybackContextStateSnapshot } from "../core/playback";
+import { getActiveSessionOrNull } from "../core/runtime/ProjectSession";
 
 /**
  * Hook for UI snapshots of playback state.
@@ -64,6 +66,86 @@ export function usePlaybackControls() {
     }),
     [clock],
   );
+}
+
+/**
+ * Get transport authority from the active project session.
+ * Returns null if no session is active.
+ *
+ * Reads directly on each render — the session object is stable
+ * and React re-renders components on project open/close.
+ */
+export function useTransport(): TransportAuthority | null {
+  return getActiveSessionOrNull()?.transportAuthority ?? null;
+}
+
+/**
+ * Hook for transport controls via the active authority.
+ * Works with whichever context is currently active (program or source).
+ */
+export function useTransportControls() {
+  const authority = useTransport();
+
+  return useMemo(
+    () => ({
+      play: () => authority?.play(),
+      pause: () => authority?.pause(),
+      stop: () => authority?.stop(),
+      seek: (time: number) => authority?.seek(time),
+      setSpeed: (speed: number) => authority?.setSpeed(speed),
+      setActiveContext: (type: "program" | "source") => authority?.setActiveContext(type),
+    }),
+    [authority],
+  );
+}
+
+/**
+ * Hook for UI snapshots of the active transport context state.
+ * Subscribes to both context switches and state changes.
+ */
+export function useTransportSnapshot(throttleMs = 50): PlaybackContextStateSnapshot & { contextType: "program" | "source" | null } {
+  const authority = useTransport();
+  const [state, setState] = useState<PlaybackContextStateSnapshot & { contextType: "program" | "source" | null }>(() => {
+    const snap = authority?.getSnapshot();
+    return {
+      time: snap?.time ?? 0,
+      state: snap?.state ?? "stopped",
+      duration: snap?.duration ?? 0,
+      speed: snap?.speed ?? 1,
+      contextType: authority?.getActiveType() ?? null,
+    };
+  });
+
+  useEffect(() => {
+    if (!authority) return;
+
+    let ctxUnsub: (() => void) | null = null;
+
+    const subscribeToActive = () => {
+      if (ctxUnsub) ctxUnsub();
+      const ctx = authority.getActiveContext();
+      if (ctx) {
+        ctxUnsub = ctx.subscribe((snapshot) => {
+          setState({ ...snapshot, contextType: ctx.type });
+        });
+      } else {
+        setState({ time: 0, state: "stopped", duration: 0, speed: 1, contextType: null });
+      }
+    };
+
+    const authUnsub = authority.subscribeToContextSwitch(() => {
+      subscribeToActive();
+    });
+
+    subscribeToActive();
+
+    return () => {
+      authUnsub();
+      if (ctxUnsub) ctxUnsub();
+    };
+  }, [authority]);
+
+  return state;
 }
 
 /**

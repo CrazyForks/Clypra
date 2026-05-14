@@ -46,6 +46,9 @@
  */
 
 import { getPlaybackClock, PlaybackClock } from "../playback/PlaybackClock";
+import { TransportAuthority } from "../playback/TransportAuthority";
+import { ProgramPlaybackContext } from "../playback/ProgramPlaybackContext";
+import { SourcePlaybackContext } from "../playback/SourcePlaybackContext";
 import { getFrameScheduler, FrameScheduler } from "../scheduler/FrameScheduler";
 import { RenderEngine } from "@/lib/renderEngine/renderEngine";
 import { QualityPreset, RendererMode, type SrpConfig } from "@/lib/renderEngine/types";
@@ -71,6 +74,9 @@ export class ProjectSession {
   private _playback: PlaybackClock | null = null;
   private _scheduler: FrameScheduler | null = null;
   private _renderRuntime: RenderEngine | null = null;
+  private _transportAuthority: TransportAuthority | null = null;
+  private _programContext: ProgramPlaybackContext | null = null;
+  private _sourceContext: SourcePlaybackContext | null = null;
 
   // Lifecycle tracking
   private _initializePromise: Promise<void> | null = null;
@@ -114,6 +120,26 @@ export class ProjectSession {
     return this._renderRuntime;
   }
 
+  /**
+   * Transport authority - single source of truth for playback ownership.
+   */
+  get transportAuthority(): TransportAuthority {
+    if (!this._transportAuthority) {
+      throw new Error(`[ProjectSession] TransportAuthority not initialized. Call initialize() first.`);
+    }
+    return this._transportAuthority;
+  }
+
+  /**
+   * Source playback context (for binding media elements in SourcePreview).
+   */
+  get sourceContext(): SourcePlaybackContext {
+    if (!this._sourceContext) {
+      throw new Error(`[ProjectSession] SourceContext not initialized. Call initialize() first.`);
+    }
+    return this._sourceContext;
+  }
+
   // ─── Lifecycle ──────────────────────────────────────────────────────────
 
   /**
@@ -138,6 +164,15 @@ export class ProjectSession {
       // Use global singletons (single clock/scheduler ensures no divergence)
       this._playback = getPlaybackClock();
       this._scheduler = getFrameScheduler();
+
+      // Create playback contexts and transport authority
+      this._programContext = new ProgramPlaybackContext(this._playback);
+      this._sourceContext = new SourcePlaybackContext();
+      this._transportAuthority = new TransportAuthority();
+      this._transportAuthority.registerContext(this._programContext);
+      this._transportAuthority.registerContext(this._sourceContext);
+      // Default to program context
+      this._transportAuthority.setActiveContext("program");
 
       // Create RenderEngine (session-owned, not singleton)
       // Each project gets its own render engine with isolated GPU resources
@@ -197,20 +232,28 @@ export class ProjectSession {
       // 4. Release media resources (video elements, audio nodes)
       await this._releaseMediaResources();
 
-      // 5. Teardown render runtime (GPU resources, WebGL contexts)
+      // 5. Teardown transport authority (disposes contexts)
+      if (this._transportAuthority) {
+        this._transportAuthority.dispose();
+        this._transportAuthority = null;
+        this._programContext = null;
+        this._sourceContext = null;
+      }
+
+      // 6. Teardown render runtime (GPU resources, WebGL contexts)
       if (this._renderRuntime) {
         this._renderRuntime.teardown();
         this._renderRuntime = null;
       }
 
-      // 6. Cancel all RAF loops
+      // 7. Cancel all RAF loops
       this._cancelRAFLoops();
 
-      // 7. Release references to global singletons (actual disposal handled by destroyRuntime)
+      // 8. Release references to global singletons (actual disposal handled by destroyRuntime)
       this._playback = null;
       this._scheduler = null;
 
-      // 8. Reset stores
+      // 9. Reset stores
       await this._resetStores();
 
       this._state = "disposed";

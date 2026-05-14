@@ -1,6 +1,23 @@
+/**
+ * Resolve aspect ratio for "Original" preview mode.
+ *
+ * IMPORTANT: In professional NLEs, "Original" means the SEQUENCE aspect ratio,
+ * NOT the source media aspect ratio. The sequence defines the render universe.
+ *
+ * The program monitor always visualizes sequence space, never adapts to clips.
+ * This maintains stability for:
+ * - Overlays and graphics
+ * - Text positioning
+ * - Motion graphics
+ * - Transitions
+ * - Export consistency
+ *
+ * If users want to see source media aspect ratio, they should use Source Preview mode.
+ */
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Expand, Shrink, Volume2, VolumeX } from "lucide-react";
-import { usePlaybackClock, usePlaybackControls, getPlaybackClock } from "@/hooks/usePlaybackClock";
+import { usePlaybackClock, usePlaybackControls, useTransportControls, getPlaybackClock } from "@/hooks/usePlaybackClock";
 import { useProjectStore } from "@/store/projectStore";
 import { useTimelineStore } from "@/store/timelineStore";
 import { useUIStore } from "@/store/uiStore";
@@ -14,18 +31,7 @@ import { cn } from "@/lib/utils";
 import type { EvaluatedMediaLayer } from "@/core/evaluation/types";
 import { AspectRatio, PREVIEW_ASPECT_LABEL } from "@/types";
 import { AspectMenuRow } from "../ui/AspectRatio";
-
-/** Format time in seconds to MM:SS or HH:MM:SS */
-function formatTime(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-
-  if (hours > 0) {
-    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-  }
-  return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-}
+import { formatTime } from "@/lib/timeFormatting";
 
 const PREVIEW_ASPECT_RATIO: Record<AspectRatio, number | null> = {
   original: null, // Uses project canvas
@@ -51,22 +57,6 @@ function previewAspectWidthOverHeight(preset: AspectRatio, canvasWidth: number, 
   return PREVIEW_ASPECT_RATIO[preset] ?? canvasWidth / ch;
 }
 
-/**
- * Resolve aspect ratio for "Original" preview mode.
- *
- * IMPORTANT: In professional NLEs, "Original" means the SEQUENCE aspect ratio,
- * NOT the source media aspect ratio. The sequence defines the render universe.
- *
- * The program monitor always visualizes sequence space, never adapts to clips.
- * This maintains stability for:
- * - Overlays and graphics
- * - Text positioning
- * - Motion graphics
- * - Transitions
- * - Export consistency
- *
- * If users want to see source media aspect ratio, they should use Source Preview mode.
- */
 function resolveOriginalPreviewAspect(layers: readonly { mediaId: string }[], mediaAssets: Array<{ id: string; width?: number; height?: number }>, canvasWidth: number, canvasHeight: number): number {
   // Always return sequence aspect ratio
   // The sequence is the coordinate universe - it doesn't change based on clips
@@ -116,6 +106,7 @@ const ProgramPreview: React.FC = () => {
   // Imperative clock (throttled UI snapshots, 10fps)
   const clockState = usePlaybackClock();
   const { play, pause, seek, setSpeed, setDuration, setFrameRate } = usePlaybackControls();
+  const { play: transportPlay, pause: transportPause, seek: transportSeek, setActiveContext } = useTransportControls();
   const clock = getPlaybackClock();
 
   const project = useProjectStore((s) => s.project);
@@ -899,7 +890,9 @@ const ProgramPreview: React.FC = () => {
         disabled={clips.length === 0}
         onPlayPause={() => {
           if (clips.length === 0) return; // Disable playback when timeline is empty
-          isPlaying ? pause() : play();
+          // Ensure program context is active before playing timeline
+          setActiveContext?.("program");
+          isPlaying ? transportPause() : transportPlay();
         }}
         onSeek={(time) => {
           if (clips.length === 0) return; // Disable seeking when timeline is empty

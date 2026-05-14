@@ -5,6 +5,8 @@ import { useUIStore } from "../../store/uiStore";
 import { useTimelineStore } from "../../store/timelineStore";
 import { useProjectStore } from "../../store/projectStore";
 import { createClipFromAsset } from "../../lib/timelineClip";
+import { getActiveSessionOrNull } from "../../core/runtime/ProjectSession";
+import type { SourcePlaybackContext } from "../../core/playback";
 import { GPUPreview } from "./GPUPreview";
 import { AudioWaveform } from "./AudioWaveform";
 import { PreviewTransport } from "./PreviewTransport";
@@ -24,161 +26,84 @@ export const SourcePreview: React.FC = () => {
   const [duration, setDuration] = useState(0);
   const [useGPU, setUseGPU] = useState(USE_GPU_PREVIEW && sourceAsset?.type === "video");
   const [gpuFailed, setGpuFailed] = useState(false);
+  const sourceCtxRef = useRef<SourcePlaybackContext | null>(null);
+
+  // Get source context from active session and bind media element
+  useEffect(() => {
+    const session = getActiveSessionOrNull();
+    if (!session) return;
+    const ctx = session.sourceContext;
+    sourceCtxRef.current = ctx;
+
+    // Bind appropriate media element
+    if (sourceAsset?.type === "audio" && audioRef.current) {
+      ctx.setMediaElement(audioRef.current);
+    } else if (sourceAsset?.type === "video" && videoRef.current && !useGPU) {
+      ctx.setMediaElement(videoRef.current);
+    } else {
+      ctx.setMediaElement(null);
+    }
+
+    // Subscribe to context state
+    const unsub = ctx.subscribe((snapshot) => {
+      setCurrentTime(snapshot.time);
+      setDuration(snapshot.duration);
+      setIsPlaying(snapshot.state === "playing");
+    });
+
+    return () => {
+      unsub();
+      ctx.setMediaElement(null);
+      sourceCtxRef.current = null;
+    };
+  }, [sourceAsset?.id, sourceAsset?.type, useGPU]);
 
   // Reset when asset changes
   useEffect(() => {
-    setCurrentTime(0);
-    setIsPlaying(false);
     setUseGPU(USE_GPU_PREVIEW && sourceAsset?.type === "video");
     setGpuFailed(false);
-  }, [sourceAsset?.id]); // Only depend on asset ID, not type
+  }, [sourceAsset?.id]);
 
   const handleSeek = useCallback((time: number) => {
-    if (videoRef.current) videoRef.current.currentTime = time;
-    if (audioRef.current) audioRef.current.currentTime = time;
-    setCurrentTime(time);
+    sourceCtxRef.current?.seek(time);
   }, []);
 
-  // Play/pause handler
   const handlePlayPause = useCallback(() => {
+    const ctx = sourceCtxRef.current;
+    if (!ctx) return;
     if (useGPU) {
-      // GPU preview: just toggle state, GPUPreview handles playback
       setIsPlaying((prev) => !prev);
-    } else if (sourceAsset?.type === "audio") {
-      // Audio: control audio element
-      const audio = audioRef.current;
-      if (!audio) return;
-      if (isPlaying) {
-        audio.pause();
-        setIsPlaying(false);
-      } else {
-        audio.play();
-        setIsPlaying(true);
-      }
     } else {
-      // HTML5 video: control video element
-      const video = videoRef.current;
-      if (!video) return;
-      if (isPlaying) {
-        video.pause();
-        setIsPlaying(false);
+      const state = ctx.getState();
+      if (state === "playing") {
+        ctx.pause();
       } else {
-        video.play();
-        setIsPlaying(true);
+        ctx.play();
       }
     }
-  }, [useGPU, sourceAsset?.type, isPlaying]);
+  }, [useGPU]);
 
-  // Play marked region (In to Out)
   const handlePlayMarkedRegion = useCallback(() => {
-    if (sourceInPoint === null || sourceOutPoint === null) return;
+    sourceCtxRef.current?.playMarkedRegion();
+  }, []);
 
-    // Seek to In point
-    handleSeek(sourceInPoint);
-
-    // Start playback if not already playing
-    if (!isPlaying) {
-      handlePlayPause();
-    }
-  }, [sourceInPoint, sourceOutPoint, isPlaying, handleSeek, handlePlayPause]);
-
-  // Monitor playback and stop at Out point
-  useEffect(() => {
-    if (!isPlaying || sourceOutPoint === null) return;
-
-    const checkInterval = setInterval(() => {
-      if (currentTime >= sourceOutPoint) {
-        // Stop playback
-        if (videoRef.current) videoRef.current.pause();
-        if (audioRef.current) audioRef.current.pause();
-        setIsPlaying(false);
-      }
-    }, 50); // Check every 50ms
-
-    return () => clearInterval(checkInterval);
-  }, [isPlaying, currentTime, sourceOutPoint]);
-
-  // Clear In/Out points
   const handleClearMarks = useCallback(() => {
     markSourceIn(null);
     markSourceOut(null);
+    sourceCtxRef.current?.clearMarks();
   }, [markSourceIn, markSourceOut]);
 
-  // Handle space key for play/pause in source preview
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't capture shortcuts when typing in input fields
-      const target = e.target as HTMLElement;
-      const isTyping = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
-      if (isTyping) return;
+  const handleMarkIn = useCallback(() => {
+    const t = sourceCtxRef.current?.getTime() ?? 0;
+    markSourceIn(t);
+    sourceCtxRef.current?.setInPoint(t);
+  }, [markSourceIn]);
 
-      // Space key for play/pause
-      if (e.code === "Space") {
-        e.preventDefault();
-        handlePlayPause();
-        return;
-      }
-
-      // Arrow keys for seeking (1 second increments)
-      const seekAmount = 1.0; // 1 second
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        const newTime = Math.max(0, currentTime - seekAmount);
-        handleSeek(newTime);
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        const newTime = Math.min(duration, currentTime + seekAmount);
-        handleSeek(newTime);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handlePlayPause, currentTime, duration, handleSeek]);
-
-  // Video event listeners (only for HTML5 video, not GPU preview)
-  useEffect(() => {
-    if (useGPU) return; // Skip if using GPU preview
-
-    const video = videoRef.current;
-    if (!video) return;
-
-    const handleTimeUpdate = () => setCurrentTime(video.currentTime);
-    const handleLoadedMetadata = () => setDuration(video.duration);
-    const handleEnded = () => setIsPlaying(false);
-
-    video.addEventListener("timeupdate", handleTimeUpdate);
-    video.addEventListener("loadedmetadata", handleLoadedMetadata);
-    video.addEventListener("ended", handleEnded);
-
-    return () => {
-      video.removeEventListener("timeupdate", handleTimeUpdate);
-      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      video.removeEventListener("ended", handleEnded);
-    };
-  }, [useGPU]);
-
-  // Audio event listeners
-  useEffect(() => {
-    if (sourceAsset?.type !== "audio") return;
-
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    const handleTimeUpdate = () => setCurrentTime(audio.currentTime);
-    const handleLoadedMetadata = () => setDuration(audio.duration);
-    const handleEnded = () => setIsPlaying(false);
-
-    audio.addEventListener("timeupdate", handleTimeUpdate);
-    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
-    audio.addEventListener("ended", handleEnded);
-
-    return () => {
-      audio.removeEventListener("timeupdate", handleTimeUpdate);
-      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      audio.removeEventListener("ended", handleEnded);
-    };
-  }, [sourceAsset?.type]);
+  const handleMarkOut = useCallback(() => {
+    const t = sourceCtxRef.current?.getTime() ?? 0;
+    markSourceOut(t);
+    sourceCtxRef.current?.setOutPoint(t);
+  }, [markSourceOut]);
 
   if (!sourceAsset) return null;
 
@@ -210,6 +135,10 @@ export const SourcePreview: React.FC = () => {
 
     addClip(newClip);
     exitSourceMode();
+
+    // Switch transport authority back to program context
+    const session = getActiveSessionOrNull();
+    session?.transportAuthority.setActiveContext("program");
   };
 
   /** Format time as HH:MM:SS:FF (frame-accurate) */
@@ -237,7 +166,15 @@ export const SourcePreview: React.FC = () => {
           <span className="text-[13px] font-semibold text-text-primary tracking-tight">Previewing</span>
           <span className="text-[13px] text-text-muted">— {mediaLabel}</span>
         </div>
-        <button onClick={exitSourceMode} className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/6 transition-colors text-text-muted hover:text-text-primary" title="Close (Esc)">
+        <button
+          onClick={() => {
+            exitSourceMode();
+            const session = getActiveSessionOrNull();
+            session?.transportAuthority.setActiveContext("program");
+          }}
+          className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/6 transition-colors text-text-muted hover:text-text-primary"
+          title="Close (Esc)"
+        >
           <X className="w-4 h-4" />
         </button>
       </div>
@@ -319,10 +256,10 @@ export const SourcePreview: React.FC = () => {
         outPoint={sourceOutPoint}
         rightActions={
           <>
-            <button onClick={() => markSourceIn(currentTime)} className={`px-2 h-6 rounded text-[10px] font-medium transition-colors cursor-pointer ${sourceInPoint !== null && Math.abs(currentTime - sourceInPoint) < 0.1 ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-white/6"}`} title="Mark In (I)">
+            <button onClick={handleMarkIn} className={`px-2 h-6 rounded text-[10px] font-medium transition-colors cursor-pointer ${sourceInPoint !== null && Math.abs(currentTime - sourceInPoint) < 0.1 ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-white/6"}`} title="Mark In (I)">
               IN
             </button>
-            <button onClick={() => markSourceOut(currentTime)} className={`px-2 h-6 rounded text-[10px] font-medium transition-colors cursor-pointer ${sourceOutPoint !== null && Math.abs(currentTime - sourceOutPoint) < 0.1 ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-white/6"}`} title="Mark Out (O)">
+            <button onClick={handleMarkOut} className={`px-2 h-6 rounded text-[10px] font-medium transition-colors cursor-pointer ${sourceOutPoint !== null && Math.abs(currentTime - sourceOutPoint) < 0.1 ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-white/6"}`} title="Mark Out (O)">
               OUT
             </button>
             {hasCompleteMarks && (
