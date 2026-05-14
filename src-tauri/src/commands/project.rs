@@ -53,7 +53,7 @@ pub fn get_recent_projects(app: tauri::AppHandle) -> Result<Vec<String>, String>
     if let Ok(entries) = fs::read_dir(&projects_dir) {
         for entry in entries.flatten() {
             if let Ok(path) = entry.path().canonicalize() {
-                if path.extension().map_or(false, |ext| ext == "json") {
+                if path.extension().is_some_and(|ext| ext == "json") {
                     if let Ok(metadata) = fs::metadata(&path) {
                         if let Ok(content) = fs::read_to_string(&path) {
                             if let Ok(modified) = metadata.modified() {
@@ -72,7 +72,7 @@ pub fn get_recent_projects(app: tauri::AppHandle) -> Result<Vec<String>, String>
         }
     }
     
-    projects.sort_by(|a, b| b.0.cmp(&a.0));
+    projects.sort_by_key(|b| std::cmp::Reverse(b.0));
     
     Ok(projects.into_iter().map(|(_, content)| content).collect())
 }

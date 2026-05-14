@@ -10,7 +10,7 @@ use std::sync::Arc;
 use thumbnail_engine::decoder::{get_decoder, release_decoder};
 use thumbnail_engine::pyramid::RawRgbaFrame;
 use thumbnail_engine::{
-    canonical_timestamp, clear_video_thumbnail_cache, downsample_pyramid, get_cache_stats,
+    clear_video_thumbnail_cache, downsample_pyramid, get_cache_stats,
     init_thumbnail_engine, tier_inflight_key, ArtifactSource, DensityLevel, FrameContentHash,
     RenderArtifact, SpatialTier, ThumbnailTile, TierCacheKey, FRAME_CACHE, IN_FLIGHT_TIER,
     TIER_CACHE,
@@ -170,6 +170,7 @@ async fn extract_poster_frame_command(
 
 use thumbnail_engine::{ResolutionTier, GLOBAL_CACHE};
 
+#[allow(dead_code)]
 async fn save_rgba_as_webp(
     rgba_bytes: &[u8],
     width: u32,
@@ -585,7 +586,7 @@ async fn decode_frames_streaming(
                 match on_tile.send(tile) {
                     Ok(_) => {
                         frames_sent += 1;
-                        if frames_sent <= 3 || frames_sent % 20 == 0 {
+                        if frames_sent <= 3 || frames_sent.is_multiple_of(20) {
                             eprintln!(
                                 "[STREAM] Sent WebP tile #{}/{}: time={:.2}s decode={:?}",
                                 frames_sent, total_frames, time, decode_time

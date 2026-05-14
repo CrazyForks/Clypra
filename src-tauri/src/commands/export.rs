@@ -13,7 +13,6 @@
  * - Multiple codec support (H.264, H.265, ProRes)
  * - Audio mixing (future)
  */
-
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -252,7 +251,7 @@ pub async fn write_export_frame(
 pub async fn finalize_video_export(session_id: String) -> Result<(), String> {
     let mut sessions = EXPORT_SESSIONS.lock().await;
     
-    let mut session = sessions
+    let session = sessions
         .remove(&session_id)
         .ok_or_else(|| format!("Export session not found: {}", session_id))?;
     

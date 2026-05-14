@@ -315,6 +315,12 @@ pub struct BackendFrameCache {
 
 const FRAME_CACHE_BUDGET: u64 = 180 * 1024 * 1024; // 180 MB
 
+impl Default for BackendFrameCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BackendFrameCache {
     pub fn new() -> Self {
         Self {
@@ -372,6 +378,12 @@ pub struct BackendTierCache {
 
 const TIER_CACHE_BUDGET: u64 = 120 * 1024 * 1024; // 120 MB
 const TIER_INACTIVE_EVICT_SECS: u64 = 10;
+
+impl Default for BackendTierCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl BackendTierCache {
     pub fn new() -> Self {
@@ -549,7 +561,7 @@ pub fn downsample_pyramid(
 }
 
 fn align_dimension(value: u32) -> u32 {
-    let aligned = ((value.max(1) + 1) / 2) * 2;
+    let aligned = value.max(1).div_ceil(2) * 2;
     aligned.max(2)
 }
 

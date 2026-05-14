@@ -76,7 +76,7 @@ async fn get_audio_duration(path: &str) -> Result<f64, String> {
     eprintln!("[get_audio_duration] Attempting to get duration for: {}", path);
     
     let output = Command::new("ffprobe")
-        .args(&[
+        .args([
             "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
@@ -136,7 +136,7 @@ pub async fn extract_audio_artwork(path: String) -> Result<Option<String>, Strin
     eprintln!("[extract_audio_artwork] Extracting artwork from: {}", path);
     
     let output = Command::new("ffmpeg")
-        .args(&[
+        .args([
             "-i", &path,
             "-an", // No audio
             "-vcodec", "copy",

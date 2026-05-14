@@ -78,6 +78,7 @@ impl ThumbnailTile {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn from_atlas(
         time: f64,
         atlas_path: String,
@@ -151,6 +152,19 @@ pub struct CacheKey {
     pub resolution_tier: ResolutionTier,
 }
 
+impl std::fmt::Display for CacheKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}:{}:{}",
+            self.video_id,
+            self.timestamp_ms,
+            self.density.label(),
+            self.resolution_tier.label()
+        )
+    }
+}
+
 impl CacheKey {
     pub fn new(video_path: &str, time: f64, density: DensityLevel, dpr: f64) -> Self {
         let video_id = format!("{:x}", md5::compute(video_path));
@@ -163,16 +177,6 @@ impl CacheKey {
             density,
             resolution_tier,
         }
-    }
-
-    pub fn to_string(&self) -> String {
-        format!(
-            "{}:{}:{}:{}",
-            self.video_id,
-            self.timestamp_ms,
-            self.density.label(),
-            self.resolution_tier.label()
-        )
     }
 
     pub fn from_string(s: &str) -> Result<Self, String> {
@@ -341,9 +345,7 @@ impl CachedFrame {
             DensityLevel::Ultra => 0,
         };
 
-        let score = viewport_priority * 10 + recency_weight * 5 + access_frequency * 3 + density_weight * 2;
-        
-        score
+        viewport_priority * 10 + recency_weight * 5 + access_frequency * 3 + density_weight * 2
     }
 }
 
@@ -510,11 +512,18 @@ pub struct ThumbnailCache {
     /// Video ID -> Video cache
     videos: DashMap<String, Arc<VideoCache>>,
     /// Max videos to keep in memory
+    #[allow(dead_code)]
     max_videos: usize,
     /// Base cache directory
     cache_dir: RwLock<Option<PathBuf>>,
     /// Total size in bytes across all videos and all density levels
     pub total_size: AtomicU64,
+}
+
+impl Default for ThumbnailCache {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ThumbnailCache {
@@ -711,6 +720,7 @@ pub struct BatchExtractionRequest {
 pub struct ExtractionQueue {
     job_tx: mpsc::Sender<ExtractionJob>,
     batch_tx: mpsc::Sender<BatchExtractionRequest>,
+    #[allow(dead_code)]
     semaphore: Arc<Semaphore>,
 }
 pub(crate) struct PrioritizedJob(pub ExtractionJob);
@@ -734,6 +744,12 @@ impl Ord for PrioritizedJob {
         // Lower Priority value = higher urgency (Critical=0 > Normal=2)
         // Use Reverse so that Critical (0) sorts highest in the max-heap
         Reverse(self.0.priority).cmp(&Reverse(other.0.priority))
+    }
+}
+
+impl Default for ExtractionQueue {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -791,39 +807,31 @@ impl ExtractionQueue {
                 // Drain all currently-available jobs into the priority queue without blocking.
                 // This ensures that if a Critical job arrives while we are about to process a
                 // Normal job, the Critical job gets picked up first.
-                loop {
-                    match job_rx.try_recv() {
-                        Ok(job) => priority_queue.push(PrioritizedJob(job)),
-                        Err(_) => break,
-                    }
+                while let Ok(job) = job_rx.try_recv() {
+                    priority_queue.push(PrioritizedJob(job));
                 }
 
                 // Also drain any pending batch requests
-                loop {
-                    match batch_rx.try_recv() {
-                        Ok(batch) => {
-                            let sem = semaphore_clone.clone();
-                            tokio::spawn(async move {
-                                let permit = sem.acquire_owned().await;
-                                if let Ok(permit) = permit {
-                                    // Hold the permit for the duration of extraction;
-                                    // it is dropped (released) when this closure returns.
-                                    let _permit = permit;
-                                    let results = Self::extract_batch(
-                                        &batch.video_path,
-                                        &batch.times,
-                                        batch.width,
-                                        batch.height,
-                                        &batch.video_id,
-                                        batch.density,
-                                        batch.resolution_tier,
-                                    ).await;
-                                    let _ = batch.result_tx.send(results);
-                                }
-                            });
+                while let Ok(batch) = batch_rx.try_recv() {
+                    let sem = semaphore_clone.clone();
+                    tokio::spawn(async move {
+                        let permit = sem.acquire_owned().await;
+                        if let Ok(permit) = permit {
+                            // Hold the permit for the duration of extraction;
+                            // it is dropped (released) when this closure returns.
+                            let _permit = permit;
+                            let results = Self::extract_batch(
+                                &batch.video_path,
+                                &batch.times,
+                                batch.width,
+                                batch.height,
+                                &batch.video_id,
+                                batch.density,
+                                batch.resolution_tier,
+                            ).await;
+                            let _ = batch.result_tx.send(results);
                         }
-                        Err(_) => break,
-                    }
+                    });
                 }
 
                 // Pop the highest-priority job from the heap
@@ -852,35 +860,27 @@ impl ExtractionQueue {
                                 // A permit became available
                                 Ok(permit) = sem.acquire_owned() => {
                                     // Drain any new jobs that arrived while we were waiting
-                                    loop {
-                                        match job_rx.try_recv() {
-                                            Ok(new_job) => priority_queue.push(PrioritizedJob(new_job)),
-                                            Err(_) => break,
-                                        }
+                                    while let Ok(new_job) = job_rx.try_recv() {
+                                        priority_queue.push(PrioritizedJob(new_job));
                                     }
                                     // Also drain any pending batch requests
-                                    loop {
-                                        match batch_rx.try_recv() {
-                                            Ok(batch) => {
-                                                let batch_sem = semaphore_clone.clone();
-                                                tokio::spawn(async move {
-                                                    if let Ok(p) = batch_sem.acquire_owned().await {
-                                                        let _p = p;
-                                                        let results = Self::extract_batch(
-                                                            &batch.video_path,
-                                                            &batch.times,
-                                                            batch.width,
-                                                            batch.height,
-                                                            &batch.video_id,
-                                                            batch.density,
-                                                            batch.resolution_tier,
-                                                        ).await;
-                                                        let _ = batch.result_tx.send(results);
-                                                    }
-                                                });
+                                    while let Ok(batch) = batch_rx.try_recv() {
+                                        let batch_sem = semaphore_clone.clone();
+                                        tokio::spawn(async move {
+                                            if let Ok(p) = batch_sem.acquire_owned().await {
+                                                let _p = p;
+                                                let results = Self::extract_batch(
+                                                    &batch.video_path,
+                                                    &batch.times,
+                                                    batch.width,
+                                                    batch.height,
+                                                    &batch.video_id,
+                                                    batch.density,
+                                                    batch.resolution_tier,
+                                                ).await;
+                                                let _ = batch.result_tx.send(results);
                                             }
-                                            Err(_) => break,
-                                        }
+                                        });
                                     }
                                     // Check if a higher-priority job arrived while waiting.
                                     // If so, push the current job back and re-sort.
@@ -984,6 +984,12 @@ pub static GLOBAL_QUEUE: Lazy<ExtractionQueue> = Lazy::new(ExtractionQueue::new)
 #[derive(Debug)]
 pub struct ActiveExtractionTracker {
     pub(crate) active_requests: DashMap<String, HashSet<u64>>,
+}
+
+impl Default for ActiveExtractionTracker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ActiveExtractionTracker {
