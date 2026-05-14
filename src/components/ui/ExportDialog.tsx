@@ -10,11 +10,11 @@ import React, { useState, useEffect } from "react";
 import { AlertCircle, CheckCircle2 } from "lucide-react";
 import { Modal } from "./Modal";
 import { Button } from "./Button";
-import { useProjectStore } from "../../store/projectStore";
-import { useTimelineStore } from "../../store/timelineStore";
+import { useProjectStore } from "@/store/projectStore";
+import { useTimelineStore } from "@/store/timelineStore";
 
 // Lazy load video export functionality (code splitting)
-const exportVideoModule = () => import("../../lib/videoExport");
+const exportVideoModule = () => import("@/lib/videoExport");
 
 interface ExportDialogProps {
   isOpen: boolean;

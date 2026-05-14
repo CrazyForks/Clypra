@@ -1,6 +1,6 @@
 import React from "react";
 import { Plus } from "lucide-react";
-import { Button } from "../../ui/Button";
+import { Button } from "@/components/ui/Button";
 import type { TabProps } from "./types";
 
 export const TextTab: React.FC<TabProps> = ({ onAddToTimeline }) => {

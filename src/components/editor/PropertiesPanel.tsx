@@ -1,8 +1,8 @@
 import React from "react";
 import { Settings } from "lucide-react";
 import { EmptyState } from "../ui/EmptyState";
-import { useUIStore } from "../../store/uiStore";
-import { useTimelineStore } from "../../store/timelineStore";
+import { useUIStore } from "@/store/uiStore";
+import { useTimelineStore } from "@/store/timelineStore";
 
 export const PropertiesPanel: React.FC = () => {
   const { selectedClipIds } = useUIStore();

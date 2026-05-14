@@ -6,7 +6,7 @@
 
 import type { Command } from "../Command";
 import { generateCommandId } from "../Command";
-import type { Track, Clip } from "../../../types";
+import type { Track, Clip } from "@/types";
 
 interface TimelineState {
   tracks: Track[];

@@ -11,10 +11,10 @@
  * Follows the Evaluation Contract (see contract.md)
  */
 
-import type { Clip, Track, MediaAsset, Project, TextClip } from "../../types";
+import type { Clip, Track, MediaAsset, Project, TextClip } from "@types";
 import type { EvaluatedScene, EvaluatedVisualLayer, EvaluatedMediaLayer, EvaluatedTextLayer, EvaluatedAudioLayer, EvaluatedTransition, SceneMetadata, BlendMode } from "./types";
 import { toCompositorClips } from "../timeline/adapter";
-import { getClipEndTime } from "../../lib/timelineClip";
+import { getClipEndTime } from "@/lib/timelineClip";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getEvaluationCache, computeClipVersion } from "./cache";
 

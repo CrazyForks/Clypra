@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { getDensityForZoom, DENSITY_CONFIGS, generateTimestampGrid, getIntervalForDensity } from "../timelineUtils";
-import { DensityLevel } from "../../types";
+import { DensityLevel } from "@types";
 
 describe("getDensityForZoom", () => {
   describe("exact boundary tests", () => {

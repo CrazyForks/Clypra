@@ -13,7 +13,7 @@ const mockMoveClip = vi.fn();
 const mockUpdateClip = vi.fn();
 const mockSelectClip = vi.fn();
 
-vi.mock("../../../store/uiStore", () => ({
+vi.mock("@/store/uiStore", () => ({
   useUIStore: () => ({
     selectedClipIds: [],
     selectedTrackId: null,
@@ -22,7 +22,7 @@ vi.mock("../../../store/uiStore", () => ({
   }),
 }));
 
-vi.mock("../../../hooks/useTimeline", () => ({
+vi.mock("@/hooks/useTimeline", () => ({
   useTimeline: () => ({
     addClipFromAsset: mockAddClipFromAsset,
     getMediaAsset: mockGetMediaAsset,
@@ -32,7 +32,7 @@ vi.mock("../../../hooks/useTimeline", () => ({
   }),
 }));
 
-vi.mock("../../../store/timelineStore", () => ({
+vi.mock("@/store/timelineStore", () => ({
   useTimelineStore: () => ({
     updateClip: mockUpdateClip,
     dragState: null,

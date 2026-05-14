@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
-import { useUIStore } from "../../../store/uiStore";
-import { useTimelineStore } from "../../../store/timelineStore";
-import type { Clip as ClipType, MediaAsset } from "../../../types";
+import { useUIStore } from "@/store/uiStore";
+import { useTimelineStore } from "@/store/timelineStore";
+import type { Clip as ClipType, MediaAsset } from "@/types";
 import { ClipFilmstrip } from "./ClipFilmstrip";
+import { TimelineWaveform } from "./TimelineWaveform";
 
 /** Movement past this (px) starts a clip drag; below it, release is still a click (selection set on pointerDown). */
 const DRAG_THRESHOLD_PX = 6;
@@ -278,11 +279,9 @@ const ClipInner: React.FC<ClipProps> = ({ clip, mediaAsset, pixelsPerSecond, sel
             <ClipFilmstrip className="w-full shrink-0" clip={clip} mediaAsset={mediaAsset} clipWidthPx={width} pixelsPerSecond={pixelsPerSecond} stripHeightPx={40} />
           </div>
         ) : mediaAsset?.type === "audio" ? (
-          mediaAsset.posterFrame ? (
-            <img src={mediaAsset.posterFrame} alt="" className="h-8 w-full rounded-[2px] border border-black/20 object-cover" draggable={false} />
-          ) : (
-            <div className="h-8 w-full rounded-[2px] bg-timeline-filmstrip-empty" />
-          )
+          <div className="flex min-h-0 w-full flex-1 items-center">
+            <TimelineWaveform audioPath={mediaAsset.path} className="rounded-[2px]" />
+          </div>
         ) : mediaAsset?.posterFrame ? (
           <img src={mediaAsset.posterFrame} alt="" className="h-8 w-full rounded-[2px] border border-black/20 object-cover" draggable={false} />
         ) : (

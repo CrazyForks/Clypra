@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from "react";
-import { usePlayback } from "../../../hooks/usePlayback";
+import { usePlayback } from "@/hooks/usePlayback";
 
 interface TimelineRulerProps {
   pixelsPerSecond: number;

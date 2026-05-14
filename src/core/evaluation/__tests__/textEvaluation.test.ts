@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { evaluateScene } from "../evaluator";
-import type { TextClip, Track, MediaAsset, Project } from "../../../types";
+import type { TextClip, Track, MediaAsset, Project } from "@/types";
 
 // Mock Tauri API
 vi.mock("@tauri-apps/api/core", () => ({

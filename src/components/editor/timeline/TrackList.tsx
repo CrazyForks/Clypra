@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Volume2, VolumeX, Lock, Unlock, Eye, EyeOff, X } from "lucide-react";
-import { useTimelineStore } from "../../../store/timelineStore";
-import { useUIStore } from "../../../store/uiStore";
+import { useTimelineStore } from "@/store/timelineStore";
+import { useUIStore } from "@/store/uiStore";
 
 interface TrackListProps {
   onEditTrack?: (trackId: string) => void;

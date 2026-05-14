@@ -8,8 +8,8 @@ import type { Clip as ClipType, MediaAsset } from "@/types";
 
 const filmstripFrames = ["data:image/png;base64,frame0", "data:image/png;base64,frame1", "data:image/png;base64,frame2", "data:image/png;base64,frame3"];
 
-vi.mock("../../../../lib/tauri", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../../../lib/tauri")>();
+vi.mock("@@lib/tauri", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@@lib/tauri")>();
   return {
     ...actual,
     extractFilmstripFrames: vi.fn(() => Promise.resolve(filmstripFrames)),
@@ -41,14 +41,14 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => {
 const mockSelectClip = vi.fn();
 const mockUpdateClip = vi.fn();
 
-vi.mock("../../../store/uiStore", () => ({
+vi.mock("@/store/uiStore", () => ({
   useUIStore: () => ({
     selectClip: mockSelectClip,
     toggleClipSelection: vi.fn(),
   }),
 }));
 
-vi.mock("../../../store/timelineStore", () => ({
+vi.mock("@/store/timelineStore", () => ({
   useTimelineStore: () => ({
     updateClip: mockUpdateClip,
     rippleEditEnabled: false,

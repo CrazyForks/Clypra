@@ -3,7 +3,7 @@
  * This is the foundation for CapCut-class compositing behavior.
  */
 
-import type { Clip } from "../../types";
+import type { Clip } from "@types";
 
 /**
  * Semantic role of a clip in the composition.

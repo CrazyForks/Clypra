@@ -1,9 +1,9 @@
 import React from "react";
 // @ts-ignore - react-dnd types issue
 import { useDragLayer } from "react-dnd";
-import { useDragStateStore } from "../../../store/dragStateStore";
-import { useTimelineStore } from "../../../store/timelineStore";
-import { useProjectStore } from "../../../store/projectStore";
+import { useDragStateStore } from "@/store/dragStateStore";
+import { useTimelineStore } from "@/store/timelineStore";
+import { useProjectStore } from "@/store/projectStore";
 
 export const ClipDragLayer: React.FC = () => {
   const { draggingClip, grabOffsetX, grabOffsetY } = useDragStateStore();

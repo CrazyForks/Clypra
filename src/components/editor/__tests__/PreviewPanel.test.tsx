@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { PreviewPanel } from "../PreviewPanel";
-import { useProjectStore } from "../../../store/projectStore";
-import { useTimelineStore } from "../../../store/timelineStore";
-import { getPlaybackClock } from "../../../hooks/usePlaybackClock";
+import { useProjectStore } from "@/store/projectStore";
+import { useTimelineStore } from "@/store/timelineStore";
+import { getPlaybackClock } from "@/hooks/usePlaybackClock";
 
 vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (value: string) => value,

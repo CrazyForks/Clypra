@@ -4,10 +4,10 @@ import { EnhancedMediaPanel } from "./EnhancedMediaPanel";
 import { PreviewPanel } from "./PreviewPanel";
 import { PropertiesPanel } from "./PropertiesPanel";
 import { Timeline } from "./timeline/Timeline";
-import { useTimelineStore } from "../../store/timelineStore";
-import { useProjectStore } from "../../store/projectStore";
-import { createClipFromAsset } from "../../lib/timelineClip";
-import { createTextClip, TEXT_PRESETS } from "../../lib/textClip";
+import { useTimelineStore } from "@/store/timelineStore";
+import { useProjectStore } from "@/store/projectStore";
+import { createClipFromAsset } from "@/lib/timelineClip";
+import { createTextClip, TEXT_PRESETS } from "@/lib/textClip";
 
 export const EditorLayout: React.FC = () => {
   const { tracks, addClip, addTrack, getTimelineEndTime } = useTimelineStore();
@@ -86,7 +86,6 @@ export const EditorLayout: React.FC = () => {
       addClip(textClip);
     } else {
       // Handle other types (audio, stickers, effects, transitions, captions)
-      
       // TODO: Implement handlers for other types
     }
   };

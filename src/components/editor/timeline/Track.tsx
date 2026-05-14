@@ -1,8 +1,8 @@
 import React, { useMemo } from "react";
-import { useUIStore } from "../../../store/uiStore";
-import { useTimeline } from "../../../hooks/useTimeline";
+import { useUIStore } from "@/store/uiStore";
+import { useTimeline } from "@/hooks/useTimeline";
 import { Clip } from "./Clip";
-import type { Clip as ClipType, Track as TrackType } from "../../../types";
+import type { Clip as ClipType, Track as TrackType } from "@/types";
 
 interface TrackProps {
   track: TrackType;

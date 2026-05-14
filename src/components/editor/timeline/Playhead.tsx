@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, RefObject } from "react";
-import { usePlaybackClock, usePlaybackControls } from "../../../hooks/usePlaybackClock";
-import { useTimelineStore } from "../../../store/timelineStore";
+import { usePlaybackClock, usePlaybackControls } from "@/hooks/usePlaybackClock";
+import { useTimelineStore } from "@/store/timelineStore";
 
 interface PlayheadProps {
   pixelsPerSecond: number;

@@ -15,7 +15,7 @@
  */
 
 import type { FrameRequest, FrameResult, RenderResourceHandle } from "../resources/types";
-import type { Clip, Track, MediaAsset, Project } from "../../types";
+import type { Clip, Track, MediaAsset, Project } from "@types";
 import { evaluateSceneCached } from "../evaluation/evaluator";
 import { rasterizeScene } from "../render/rasterizer";
 import { getResourceCache } from "../resources/ResourceCache";

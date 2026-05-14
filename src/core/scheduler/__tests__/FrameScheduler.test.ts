@@ -6,10 +6,10 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FrameScheduler } from "../FrameScheduler";
-import type { FrameRequest } from "../../resources/types";
+import type { FrameRequest } from "@resources/types";
 
 // Mock dependencies
-vi.mock("../../evaluation/evaluator", () => ({
+vi.mock("@evaluation/evaluator", () => ({
   evaluateSceneCached: vi.fn(() => ({
     visualLayers: [],
     audioLayers: [],
@@ -24,7 +24,7 @@ vi.mock("../../evaluation/evaluator", () => ({
   })),
 }));
 
-vi.mock("../../render/rasterizer", () => ({
+vi.mock("@render/rasterizer", () => ({
   rasterizeScene: vi.fn(async () => ({
     canvas: new MockOffscreenCanvas(1920, 1080),
     ctx: {},
@@ -36,7 +36,7 @@ vi.mock("../../render/rasterizer", () => ({
   })),
 }));
 
-vi.mock("../../resources/ResourceManager", () => ({
+vi.mock("@resources/ResourceManager", () => ({
   getResourceManager: vi.fn(() => ({
     acquire: vi.fn(),
     get: vi.fn(),

@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { FrameScheduler, resetFrameScheduler } from "../FrameScheduler";
-import type { Clip, Track, MediaAsset, Project } from "../../../types";
+import type { Clip, Track, MediaAsset, Project } from "@/types";
 
 // Mock Tauri API
 vi.mock("@tauri-apps/api/core", () => ({

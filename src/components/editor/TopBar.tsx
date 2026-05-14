@@ -1,12 +1,12 @@
 import React, { useState, lazy, Suspense } from "react";
 import { Film, Upload, Home, Settings, Camera } from "lucide-react";
 import { Button } from "../ui/Button";
-import { usePlayback } from "../../hooks/usePlayback";
-import { useProjectStore } from "../../store/projectStore";
-import { useUIStore } from "../../store/uiStore";
-import { useTimelineStore } from "../../store/timelineStore";
-import { useHistoryStore } from "../../store/historyStore";
-import { exportFrameAndDownload } from "../../lib/exportFrame";
+import { usePlayback } from "@/hooks/usePlayback";
+import { useProjectStore } from "@/store/projectStore";
+import { useUIStore } from "@/store/uiStore";
+import { useTimelineStore } from "@/store/timelineStore";
+import { useHistoryStore } from "@/store/historyStore";
+import { exportFrameAndDownload } from "@/lib/exportFrame";
 import { useTauriFullscreen } from "@/hooks/useTauriFullscreen";
 
 // Lazy load ExportDialog (code splitting)

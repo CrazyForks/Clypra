@@ -2,8 +2,8 @@ import React from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { TrackList } from "../TrackList";
-import { useTimelineStore } from "../../../../store/timelineStore";
-import { useUIStore } from "../../../../store/uiStore";
+import { useTimelineStore } from "@@store/timelineStore";
+import { useUIStore } from "@@store/uiStore";
 
 describe("TrackList interactions", () => {
   beforeEach(() => {

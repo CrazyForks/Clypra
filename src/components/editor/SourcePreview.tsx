@@ -1,12 +1,12 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import { Plus, X, RotateCcw, Play } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useUIStore } from "../../store/uiStore";
-import { useTimelineStore } from "../../store/timelineStore";
-import { useProjectStore } from "../../store/projectStore";
-import { createClipFromAsset } from "../../lib/timelineClip";
-import { getActiveSessionOrNull } from "../../core/runtime/ProjectSession";
-import type { SourcePlaybackContext } from "../../core/playback";
+import { useUIStore } from "@/store/uiStore";
+import { useTimelineStore } from "@/store/timelineStore";
+import { useProjectStore } from "@/store/projectStore";
+import { createClipFromAsset } from "@/lib/timelineClip";
+import { getActiveSessionOrNull } from "@/core/runtime/ProjectSession";
+import type { SourcePlaybackContext } from "@/core/playback";
 import { GPUPreview } from "./GPUPreview";
 import { AudioWaveform } from "./AudioWaveform";
 import { PreviewTransport } from "./PreviewTransport";

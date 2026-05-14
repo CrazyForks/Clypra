@@ -2,8 +2,8 @@ import React, { useState } from "react";
 import { Check, Palette, SlidersHorizontal, Info, Paintbrush, RotateCcw, Copy, Download, Upload } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Modal } from "./Modal";
-import { useSettingsStore, Theme, FontFamily, THEME_META, FONT_META, getThemeColors, getBaseThemeForCustomization, getThemeColorKeys } from "../../store/settingsStore";
-import { useProjectStore } from "../../store/projectStore";
+import { useSettingsStore, Theme, FontFamily, THEME_META, FONT_META, getThemeColors, getBaseThemeForCustomization, getThemeColorKeys } from "@/store/settingsStore";
+import { useProjectStore } from "@/store/projectStore";
 
 interface SettingsModalProps {
   isOpen: boolean;

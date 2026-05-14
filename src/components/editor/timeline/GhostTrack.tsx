@@ -1,8 +1,8 @@
 import React from "react";
 // @ts-ignore - react-dnd types issue
 import { useDrop } from "react-dnd";
-import { handleCreateTrackAndDrop } from "../../../lib/timelineUtils";
-import type { DragItem } from "../../../types";
+import { handleCreateTrackAndDrop } from "@/lib/timelineUtils";
+import type { DragItem } from "@/types";
 
 interface GhostTrackProps {
   insertIndex: number;

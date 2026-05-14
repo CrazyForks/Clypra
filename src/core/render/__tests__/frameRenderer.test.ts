@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderFrame, renderFrameToPNG, renderFrameToJPEG, renderFrameToImageData } from "../frameRenderer";
-import type { EvaluatedScene, EvaluatedMediaLayer, EvaluatedTextLayer } from "../../evaluation/types";
+import type { EvaluatedScene, EvaluatedMediaLayer, EvaluatedTextLayer } from "@evaluation/types";
 
 // Mock OffscreenCanvas for Node environment
 class MockImageData {

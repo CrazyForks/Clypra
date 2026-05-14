@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { useRenderRuntime } from "../../hooks/useRenderRuntime";
+import { useRenderRuntime } from "@/hooks/useRenderRuntime";
 import { type RenderState, type RenderArtifact, type RenderEpochId, SpatialTier, TemporalTier, InteractionState, VelocityState, RendererMode } from "./types";
 import { computeEpochId } from "./epoch";
 

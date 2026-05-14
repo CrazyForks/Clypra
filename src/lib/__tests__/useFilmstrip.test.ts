@@ -31,7 +31,7 @@ vi.mock("../renderEngine/hooks", () => ({
   useRenderState: mockUseRenderState,
 }));
 
-vi.mock("../../hooks/useRenderRuntime", () => ({
+vi.mock("@/hooks/useRenderRuntime", () => ({
   useRenderRuntime: mockUseRenderRuntime,
 }));
 

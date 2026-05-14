@@ -1,6 +1,6 @@
 import { describe, it } from "vitest";
 import fc from "fast-check";
-import { DensityLevel } from "../../types";
+import { DensityLevel } from "@types";
 import { DENSITY_CONFIGS, generateTimestampGrid, getDensityForZoom } from "../timelineUtils";
 
 type ResolutionTier = "1x" | "2x";
@@ -11,9 +11,7 @@ type FrontendCacheKey = {
   resolutionTier: ResolutionTier;
 };
 
-const hex32Arbitrary = fc
-  .array(fc.constantFrom("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"), { minLength: 32, maxLength: 32 })
-  .map((chars) => chars.join(""));
+const hex32Arbitrary = fc.array(fc.constantFrom("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"), { minLength: 32, maxLength: 32 }).map((chars) => chars.join(""));
 
 function densityLabel(density: DensityLevel): "low" | "medium" | "high" | "ultra" {
   switch (density) {
@@ -95,23 +93,11 @@ describe("timelineUtils Property-Based Tests", () => {
   it("Property 1: Cache key round-trip preservation", () => {
     fc.assert(
       fc.property(
-        fc
-          .tuple(
-            hex32Arbitrary,
-            fc.float({ min: 0, max: 24 * 60 * 60, noNaN: true }),
-            fc.constantFrom(DensityLevel.Low, DensityLevel.Medium, DensityLevel.High, DensityLevel.Ultra),
-            fc.constantFrom("1x" as const, "2x" as const),
-          )
-          .filter(([, timeSeconds]) => Number.isFinite(timeSeconds)),
+        fc.tuple(hex32Arbitrary, fc.float({ min: 0, max: 24 * 60 * 60, noNaN: true }), fc.constantFrom(DensityLevel.Low, DensityLevel.Medium, DensityLevel.High, DensityLevel.Ultra), fc.constantFrom("1x" as const, "2x" as const)).filter(([, timeSeconds]) => Number.isFinite(timeSeconds)),
         ([videoId, timeSeconds, density, resolutionTier]) => {
           const original = createCacheKey(videoId, timeSeconds, density, resolutionTier);
           const parsed = parseCacheKey(serializeCacheKey(original));
-          return (
-            parsed.videoId === original.videoId &&
-            parsed.timestampMs === original.timestampMs &&
-            parsed.density === original.density &&
-            parsed.resolutionTier === original.resolutionTier
-          );
+          return parsed.videoId === original.videoId && parsed.timestampMs === original.timestampMs && parsed.density === original.density && parsed.resolutionTier === original.resolutionTier;
         },
       ),
       { numRuns: 100 },
@@ -122,14 +108,7 @@ describe("timelineUtils Property-Based Tests", () => {
   it("Property 3: cache key stability within density buckets", () => {
     fc.assert(
       fc.property(
-        fc
-          .tuple(
-            fc.constantFrom(...DENSITY_CONFIGS),
-            hex32Arbitrary,
-            fc.float({ min: 0, max: 10_000, noNaN: true }),
-            fc.constantFrom("1x" as const, "2x" as const),
-          )
-          .filter(([config]) => Number.isFinite(config.maxZoom)),
+        fc.tuple(fc.constantFrom(...DENSITY_CONFIGS), hex32Arbitrary, fc.float({ min: 0, max: 10_000, noNaN: true }), fc.constantFrom("1x" as const, "2x" as const)).filter(([config]) => Number.isFinite(config.maxZoom)),
         ([config, videoId, timeSeconds, resolutionTier]) => {
           const zoomA = config.minZoom + (config.maxZoom - config.minZoom) * 0.25;
           const zoomB = config.minZoom + (config.maxZoom - config.minZoom) * 0.75;
@@ -164,9 +143,7 @@ describe("timelineUtils Property-Based Tests", () => {
   it("Property 5: timestamp grid uniform spacing", () => {
     fc.assert(
       fc.property(
-        fc
-          .tuple(fc.float({ min: 0, max: 1000, noNaN: true }), fc.float({ min: 0, max: 1000, noNaN: true }), fc.constantFrom(5.0, 1.0, 0.2, 0.05), fc.float({ min: 1, max: 1000, noNaN: true }))
-          .filter(([trimIn, trimOut, _interval, videoDuration]) => trimIn < trimOut && trimOut <= videoDuration),
+        fc.tuple(fc.float({ min: 0, max: 1000, noNaN: true }), fc.float({ min: 0, max: 1000, noNaN: true }), fc.constantFrom(5.0, 1.0, 0.2, 0.05), fc.float({ min: 1, max: 1000, noNaN: true })).filter(([trimIn, trimOut, _interval, videoDuration]) => trimIn < trimOut && trimOut <= videoDuration),
         ([trimIn, trimOut, interval, videoDuration]) => {
           const timestamps = generateTimestampGrid(trimIn, trimOut, interval, videoDuration);
           if (timestamps.length < 2) return true;
@@ -185,16 +162,13 @@ describe("timelineUtils Property-Based Tests", () => {
   // Feature: video-zoom-performance-optimization, Property 6: Nearest timestamp selection
   it("Property 6: nearest timestamp selection", () => {
     fc.assert(
-      fc.property(
-        fc.tuple(fc.float({ min: 0, max: 1000, noNaN: true }), fc.array(fc.float({ min: 0, max: 1000, noNaN: true }), { minLength: 1, maxLength: 30 })),
-        ([targetTime, samples]) => {
-          const cached = [...new Set(samples.map((v) => Math.round(v * 1000) / 1000))].sort((a, b) => a - b);
-          if (cached.length === 0) return true;
-          const selected = nearestTimestamp(targetTime, cached);
-          const selectedDistance = Math.abs(selected - targetTime);
-          return cached.every((candidate) => selectedDistance <= Math.abs(candidate - targetTime));
-        },
-      ),
+      fc.property(fc.tuple(fc.float({ min: 0, max: 1000, noNaN: true }), fc.array(fc.float({ min: 0, max: 1000, noNaN: true }), { minLength: 1, maxLength: 30 })), ([targetTime, samples]) => {
+        const cached = [...new Set(samples.map((v) => Math.round(v * 1000) / 1000))].sort((a, b) => a - b);
+        if (cached.length === 0) return true;
+        const selected = nearestTimestamp(targetTime, cached);
+        const selectedDistance = Math.abs(selected - targetTime);
+        return cached.every((candidate) => selectedDistance <= Math.abs(candidate - targetTime));
+      }),
       { numRuns: 100 },
     );
   });
@@ -203,16 +177,7 @@ describe("timelineUtils Property-Based Tests", () => {
   it("Property 16: global grid alignment for overlapping clips", () => {
     fc.assert(
       fc.property(
-        fc
-          .tuple(
-            fc.float({ min: 0, max: 50, noNaN: true }),
-            fc.float({ min: 0, max: 50, noNaN: true }),
-            fc.float({ min: 0, max: 50, noNaN: true }),
-            fc.float({ min: 0, max: 50, noNaN: true }),
-            fc.constantFrom(5.0, 1.0, 0.2, 0.05),
-            fc.float({ min: 50, max: 100, noNaN: true }),
-          )
-          .filter(([trimIn1, trimOut1, trimIn2, trimOut2, _interval, videoDuration]) => trimIn1 < trimOut1 && trimIn2 < trimOut2 && trimOut1 <= videoDuration && trimOut2 <= videoDuration && trimOut1 > trimIn2 && trimOut2 > trimIn1),
+        fc.tuple(fc.float({ min: 0, max: 50, noNaN: true }), fc.float({ min: 0, max: 50, noNaN: true }), fc.float({ min: 0, max: 50, noNaN: true }), fc.float({ min: 0, max: 50, noNaN: true }), fc.constantFrom(5.0, 1.0, 0.2, 0.05), fc.float({ min: 50, max: 100, noNaN: true })).filter(([trimIn1, trimOut1, trimIn2, trimOut2, _interval, videoDuration]) => trimIn1 < trimOut1 && trimIn2 < trimOut2 && trimOut1 <= videoDuration && trimOut2 <= videoDuration && trimOut1 > trimIn2 && trimOut2 > trimIn1),
         ([trimIn1, trimOut1, trimIn2, trimOut2, interval, videoDuration]) => {
           const gridA = generateTimestampGrid(trimIn1, trimOut1, interval, videoDuration);
           const gridB = generateTimestampGrid(trimIn2, trimOut2, interval, videoDuration);

@@ -2,9 +2,9 @@ import React from "react";
 import { Plus } from "lucide-react";
 // @ts-ignore - react-dnd types issue
 import { useDrop } from "react-dnd";
-import { useTimelineStore } from "../../../store/timelineStore";
-import { handleCreateTrackAndDrop } from "../../../lib/timelineUtils";
-import type { DragItem } from "../../../types";
+import { useTimelineStore } from "@/store/timelineStore";
+import { handleCreateTrackAndDrop } from "@/lib/timelineUtils";
+import type { DragItem } from "@/types";
 
 interface EmptyTimelineDropZoneProps {
   isDragging: boolean;

@@ -49,24 +49,27 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => {
       if (cmd === "get_render_artifact") {
         const channel = args.onArtifact as MockChannel | undefined;
         const lat = state?.invokeLatency || 0;
-        await new Promise(r => setTimeout(r, lat));
+        await new Promise((r) => setTimeout(r, lat));
         if (channel?.onmessage) {
           // Emit one mock RGBA artifact per timestamp in the request
           const timestamps = (args.timestampMs as number[] | undefined) ?? [];
           timestamps.forEach((ts, i) => {
-            setTimeout(() => {
-              channel.onmessage?.({
-                frame_id: `f-${ts}`,
-                content_hash: `h-${ts}`,
-                spatial_tier: (args["spatialTiers"] as string[] | undefined)?.[0] ?? "l0",
-                rgba_data: new Array(80 * 45 * 4).fill(128),
-                width: 80,
-                height: 45,
-                timestamp_ms: ts,
-                epoch_id: args.epochId ?? "epoch-test",
-                source: "mock",
-              });
-            }, lat + i * 5);
+            setTimeout(
+              () => {
+                channel.onmessage?.({
+                  frame_id: `f-${ts}`,
+                  content_hash: `h-${ts}`,
+                  spatial_tier: (args["spatialTiers"] as string[] | undefined)?.[0] ?? "l0",
+                  rgba_data: new Array(80 * 45 * 4).fill(128),
+                  width: 80,
+                  height: 45,
+                  timestamp_ms: ts,
+                  epoch_id: args.epochId ?? "epoch-test",
+                  source: "mock",
+                });
+              },
+              lat + i * 5,
+            );
           });
         }
       }
@@ -77,7 +80,7 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => {
 
 // ─── tauri lib mock ───────────────────────────────────────────────────────────
 
-vi.mock("../../../../lib/tauri", () => ({
+vi.mock("@@lib/tauri", () => ({
   normalizePathForTauriInvoke: (path: string) => path,
 }));
 
@@ -85,7 +88,7 @@ vi.mock("../../../../lib/tauri", () => ({
 
 // useRenderState is used inside useFilmstrip (imported from renderEngine/hooks).
 // Mock it to return a stable render state so we can control epoch + tier.
-vi.mock("../../../../lib/renderEngine/hooks", async () => {
+vi.mock("@@lib/renderEngine/hooks", async () => {
   const { SpatialTier, InteractionState } = await import("@/lib/renderEngine/types");
   return {
     useRenderState: vi.fn(() => ({
@@ -102,11 +105,14 @@ vi.mock("../../../../lib/renderEngine/hooks", async () => {
 
 // ─── createImageBitmap stub ───────────────────────────────────────────────────
 
-vi.stubGlobal("createImageBitmap", vi.fn(async (data: { width: number; height: number }) => ({
-  width: data.width,
-  height: data.height,
-  close: vi.fn(),
-})));
+vi.stubGlobal(
+  "createImageBitmap",
+  vi.fn(async (data: { width: number; height: number }) => ({
+    width: data.width,
+    height: data.height,
+    close: vi.fn(),
+  })),
+);
 
 // ─── Import ClipFilmstrip after mocks ─────────────────────────────────────────
 
@@ -144,24 +150,11 @@ const createMockMediaAsset = (overrides?: Partial<MediaAsset>): MediaAsset => ({
   ...overrides,
 });
 
-const renderFilmstrip = (props: {
-  clip?: Clip;
-  mediaAsset?: MediaAsset;
-  pixelsPerSecond?: number;
-  stripHeightPx?: number;
-}) => {
+const renderFilmstrip = (props: { clip?: Clip; mediaAsset?: MediaAsset; pixelsPerSecond?: number; stripHeightPx?: number }) => {
   const clip = props.clip ?? createMockClip();
   const mediaAsset = props.mediaAsset ?? createMockMediaAsset();
   const pps = props.pixelsPerSecond ?? 100;
-  return render(
-    <ClipFilmstrip
-      clip={clip}
-      mediaAsset={mediaAsset}
-      clipWidthPx={clip.duration * pps}
-      pixelsPerSecond={pps}
-      stripHeightPx={props.stripHeightPx ?? 32}
-    />,
-  );
+  return render(<ClipFilmstrip clip={clip} mediaAsset={mediaAsset} clipWidthPx={clip.duration * pps} pixelsPerSecond={pps} stripHeightPx={props.stripHeightPx ?? 32} />);
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -196,7 +189,9 @@ describe("ClipFilmstrip Integration Tests", () => {
     const filmstrip = screen.getByTestId("clip-filmstrip");
     expect(filmstrip).toBeInTheDocument();
 
-    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
 
     // Canvas is present in the filmstrip
     expect(filmstrip.querySelector("canvas")).not.toBeNull();
@@ -219,15 +214,7 @@ describe("ClipFilmstrip Integration Tests", () => {
     const initialCallCount = mockState.invokeCalls.length;
 
     // Re-render at same zoom (same epoch — no new request expected)
-    rerender(
-      <ClipFilmstrip
-        clip={clip}
-        mediaAsset={mediaAsset}
-        clipWidthPx={clip.duration * 110}
-        pixelsPerSecond={110}
-        stripHeightPx={32}
-      />,
-    );
+    rerender(<ClipFilmstrip clip={clip} mediaAsset={mediaAsset} clipWidthPx={clip.duration * 110} pixelsPerSecond={110} stripHeightPx={32} />);
     await act(async () => {});
 
     // Epoch didn't change → no new render artifact request
@@ -251,18 +238,12 @@ describe("ClipFilmstrip Integration Tests", () => {
     const callsBefore = mockState.invokeCalls.length;
 
     // Change pixelsPerSecond significantly to simulate zoom
-    rerender(
-      <ClipFilmstrip
-        clip={clip}
-        mediaAsset={mediaAsset}
-        clipWidthPx={clip.duration * 200}
-        pixelsPerSecond={200}
-        stripHeightPx={32}
-      />,
-    );
+    rerender(<ClipFilmstrip clip={clip} mediaAsset={mediaAsset} clipWidthPx={clip.duration * 200} pixelsPerSecond={200} stripHeightPx={32} />);
 
     // Advance past debounce
-    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
 
     // get_render_artifact may or may not be called depending on epoch change
     // — the key invariant is the filmstrip canvas remains visible
@@ -286,26 +267,22 @@ describe("ClipFilmstrip Integration Tests", () => {
 
     // Rapid zoom through multiple values
     for (const pps of [150, 200, 300, 400]) {
-      rerender(
-        <ClipFilmstrip
-          clip={clip}
-          mediaAsset={mediaAsset}
-          clipWidthPx={clip.duration * pps}
-          pixelsPerSecond={pps}
-          stripHeightPx={32}
-        />,
-      );
-      await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+      rerender(<ClipFilmstrip clip={clip} mediaAsset={mediaAsset} clipWidthPx={clip.duration * pps} pixelsPerSecond={pps} stripHeightPx={32} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
     }
 
     // Wait for final debounce to settle
-    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
 
     // Filmstrip should still be rendered
     expect(screen.getByTestId("clip-filmstrip")).toBeInTheDocument();
 
     // All recorded calls should be get_render_artifact (not the old command)
-    const legacyCalls = mockState.invokeCalls.filter(c => c.cmd === "get_thumbnails_for_timestamps");
+    const legacyCalls = mockState.invokeCalls.filter((c) => c.cmd === "get_thumbnails_for_timestamps");
     expect(legacyCalls.length).toBe(0);
   });
 
@@ -323,20 +300,14 @@ describe("ClipFilmstrip Integration Tests", () => {
     await act(async () => {});
 
     // Verify no legacy commands were used
-    const legacyCalls = mockState.invokeCalls.filter(c => c.cmd === "get_thumbnails_for_timestamps");
+    const legacyCalls = mockState.invokeCalls.filter((c) => c.cmd === "get_thumbnails_for_timestamps");
     expect(legacyCalls.length).toBe(0);
 
     // Zoom to higher density
-    rerender(
-      <ClipFilmstrip
-        clip={clip}
-        mediaAsset={mediaAsset}
-        clipWidthPx={clip.duration * 200}
-        pixelsPerSecond={200}
-        stripHeightPx={32}
-      />,
-    );
-    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    rerender(<ClipFilmstrip clip={clip} mediaAsset={mediaAsset} clipWidthPx={clip.duration * 200} pixelsPerSecond={200} stripHeightPx={32} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
 
     // Canvas is present
     const filmstrip = screen.getByTestId("clip-filmstrip");
@@ -364,9 +335,7 @@ describe("ClipFilmstrip Integration Tests", () => {
     expect(screen.getByTestId("clip-filmstrip-fallback")).toBeInTheDocument();
 
     // Should NOT have called any render commands for images
-    const renderCalls = mockState.invokeCalls.filter(
-      c => c.cmd === "get_render_artifact" || c.cmd === "get_thumbnails_for_timestamps",
-    );
+    const renderCalls = mockState.invokeCalls.filter((c) => c.cmd === "get_render_artifact" || c.cmd === "get_thumbnails_for_timestamps");
     expect(renderCalls.length).toBe(0);
   });
 });

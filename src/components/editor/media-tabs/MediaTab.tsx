@@ -1,21 +1,22 @@
 import React, { useState, useCallback, useMemo } from "react";
-import { CloudUpload, Music, Film, Image, Plus, Check } from "lucide-react";
+import { CloudUpload, Music, Film, Image, Plus } from "lucide-react";
 // @ts-ignore - react-dnd types issue
 import { useDrag } from "react-dnd";
 import { invoke } from "@tauri-apps/api/core";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { Button } from "../../ui/Button";
-import { EmptyState } from "../../ui/EmptyState";
-import { ContextMenu } from "../../ui/ContextMenu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/Tooltip";
-import { useMediaImport } from "../../../hooks/useMediaImport";
-import { useFileDrop } from "../../../hooks/useFileDrop";
-import { useProjectStore } from "../../../store/projectStore";
-import { useUIStore } from "../../../store/uiStore";
-import { useTimelineStore } from "../../../store/timelineStore";
-import type { VideoMetadata } from "../../../types";
+import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ContextMenu } from "@/components/ui/ContextMenu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/Tooltip";
+import { useMediaImport } from "@/hooks/useMediaImport";
+import { useFileDrop } from "@/hooks/useFileDrop";
+import { useProjectStore } from "@/store/projectStore";
+import { useUIStore } from "@/store/uiStore";
+import { useTimelineStore } from "@/store/timelineStore";
+import type { VideoMetadata } from "@/types";
 import type { MediaTabProps } from "./types";
 import { generateId } from "@/lib/id";
+import { MediaCardWaveform } from "./MediaCardWaveform";
 
 export const MediaTab: React.FC<MediaTabProps> = ({ onAddToTimeline }) => {
   const { mediaAssets, removeMediaAsset, addMediaAsset } = useProjectStore();
@@ -224,7 +225,7 @@ const MediaCard: React.FC<MediaCardProps> = ({ asset, isSelected, isUsedInTimeli
     previewAsset(asset); // Switch to source preview
 
     // Switch transport authority to source context
-    import("../../../core/runtime/ProjectSession").then(({ getActiveSessionOrNull }) => {
+    import("@/core/runtime/ProjectSession").then(({ getActiveSessionOrNull }) => {
       const session = getActiveSessionOrNull();
       session?.transportAuthority?.setActiveContext("source");
     });
@@ -233,7 +234,7 @@ const MediaCard: React.FC<MediaCardProps> = ({ asset, isSelected, isUsedInTimeli
   return (
     <div ref={drag as unknown as React.Ref<HTMLDivElement>} onClick={handleClick} onContextMenu={onContextMenu} className={`group relative bg-surface-raised rounded overflow-hidden transition-all cursor-pointer ${isDragging ? "opacity-50" : ""} ${isSelected ? "ring-1 ring-accent" : ""}`}>
       <div className="aspect-video bg-surface-raised flex items-center justify-center relative">
-        {asset.posterFrame && !/\.(mp4|mov|avi|mkv|webm|flv)(%|$)/i.test(asset.posterFrame) ? <img src={asset.posterFrame} alt={asset.name} className="w-full h-full object-contain" /> : <div className="w-8 h-8">{asset.type === "video" ? <Film className="w-full h-full text-text-muted" /> : asset.type === "audio" ? <Music className="w-full h-full text-text-muted" /> : <Image className="w-full h-full text-text-muted" />}</div>}
+        {asset.type === "video" && asset.posterFrame && !/\.(mp4|mov|avi|mkv|webm|flv)(%|$)/i.test(asset.posterFrame) ? <img src={asset.posterFrame} alt={asset.name} className="w-full h-full object-contain" /> : asset.type === "audio" ? <MediaCardWaveform audioPath={asset.path.startsWith("asset://") ? asset.path : convertFileSrc(asset.path)} duration={asset.duration} className="w-full h-full" /> : <div className="w-8 h-8">{asset.type === "video" ? <Film className="w-full h-full text-text-muted" /> : <Image className="w-full h-full text-text-muted" />}</div>}
         {asset.duration > 0 && (
           <div className="absolute bottom-1 right-1 bg-black/70 px-1.5 py-0.5 rounded text-xs text-white">
             {Math.floor(Math.ceil(asset.duration) / 60)}:{String(Math.ceil(asset.duration) % 60).padStart(2, "0")}

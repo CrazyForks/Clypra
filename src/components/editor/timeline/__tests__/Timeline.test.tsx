@@ -2,9 +2,9 @@ import React from "react";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { Timeline } from "../Timeline";
-import { useTimelineStore } from "../../../../store/timelineStore";
-import { useProjectStore } from "../../../../store/projectStore";
-import { useUIStore } from "../../../../store/uiStore";
+import { useTimelineStore } from "@@store/timelineStore";
+import { useProjectStore } from "@@store/projectStore";
+import { useUIStore } from "@@store/uiStore";
 
 const seekMock = vi.fn();
 const setDurationMock = vi.fn();
@@ -20,7 +20,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: vi.fn((value: string) => value),
 }));
 
-vi.mock("../../../../hooks/usePlayback", () => ({
+vi.mock("@@hooks/usePlayback", () => ({
   usePlayback: () => ({
     currentTime: 0,
     duration: 20,
@@ -35,7 +35,7 @@ vi.mock("../../../../hooks/usePlayback", () => ({
   }),
 }));
 
-vi.mock("../../../../hooks/useRenderRuntime", () => ({
+vi.mock("@@hooks/useRenderRuntime", () => ({
   useRenderRuntime: () => mockRuntimeRef.current,
 }));
 

@@ -1,15 +1,15 @@
 import React, { useRef, useState } from "react";
 import { Plus, MousePointer2, Scissors, Magnet, Link2, Mic, Search, ZoomIn, ZoomOut, ArrowLeftRight, Waves, Undo2, Redo2 } from "lucide-react";
-import { Button } from "../../ui/Button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../ui/Tooltip";
-import { useTimelineStore } from "../../../store/timelineStore";
-import { useUIStore } from "../../../store/uiStore";
-import { useSettingsStore } from "../../../store/settingsStore";
-import { useHistoryStore } from "../../../store/historyStore";
-import { SuccessToast } from "../../ui/SuccessToast";
-import { DEFAULT_SRP_CONFIG, SpatialTier } from "../../../lib/renderEngine/types";
-import { clampTimelineZoom, formatCadenceSeconds, getSrpTierForZoom, getTimelineTemporalDetail, getZoomFromRatio, getZoomRatio, snapTimelineZoomToTierAnchors, TIMELINE_TIER_LABELS, TIMELINE_ZOOM_MAX, TIMELINE_ZOOM_MIN, TIMELINE_ZOOM_STEP } from "../../../lib/timelineZoom";
-import { useSplitMode } from "../../../hooks/useSplitMode";
+import { Button } from "@/components/ui/Button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/Tooltip";
+import { useTimelineStore } from "@/store/timelineStore";
+import { useUIStore } from "@/store/uiStore";
+import { useSettingsStore } from "@/store/settingsStore";
+import { useHistoryStore } from "@/store/historyStore";
+import { SuccessToast } from "@/components/ui/SuccessToast";
+import { DEFAULT_SRP_CONFIG, SpatialTier } from "@/lib/renderEngine/types";
+import { clampTimelineZoom, formatCadenceSeconds, getSrpTierForZoom, getTimelineTemporalDetail, getZoomFromRatio, getZoomRatio, snapTimelineZoomToTierAnchors, TIMELINE_TIER_LABELS, TIMELINE_ZOOM_MAX, TIMELINE_ZOOM_MIN, TIMELINE_ZOOM_STEP } from "@/lib/timelineZoom";
+import { useSplitMode } from "@/hooks/useSplitMode";
 
 export const TimelineToolbar: React.FC = () => {
   const { zoomLevel, pixelsPerSecond, setZoom, addTrack, swapClips, rippleEditEnabled, toggleRippleEdit } = useTimelineStore();

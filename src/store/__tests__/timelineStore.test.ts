@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useTimelineStore } from "../timelineStore";
 import { useHistoryStore } from "../historyStore";
-import { SplitClipCommand } from "../../core/history/commands/SplitClipCommand";
-import type { Clip } from "../../types";
+import { SplitClipCommand } from "@/core/history/commands/SplitClipCommand";
+import type { Clip } from "@types";
 
 describe("timelineStore clip operations", () => {
   beforeEach(() => {

@@ -8,13 +8,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { invoke, Channel } from "@tauri-apps/api/core";
-import {
-  normalizePathForTauriInvoke,
-  decodeFrame,
-  decodeFramesStreaming,
-  releaseVideoDecoder,
-} from "../tauri";
-import { DensityLevel } from "../../types";
+import { normalizePathForTauriInvoke, decodeFrame, decodeFramesStreaming, releaseVideoDecoder } from "../tauri";
+import { DensityLevel } from "@types";
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -90,9 +85,12 @@ describe("decodeFrame", () => {
     vi.mocked(invoke).mockResolvedValueOnce("data:image/webp;base64,x=");
     await decodeFrame("file:///Users/test/clip.mov", 1.0, 320, 180);
 
-    expect(invoke).toHaveBeenCalledWith("decode_frame", expect.objectContaining({
-      videoPath: "/Users/test/clip.mov",
-    }));
+    expect(invoke).toHaveBeenCalledWith(
+      "decode_frame",
+      expect.objectContaining({
+        videoPath: "/Users/test/clip.mov",
+      }),
+    );
   });
 
   it("propagates Rust errors as thrown exceptions", async () => {
@@ -111,14 +109,9 @@ describe("decodeFrame", () => {
   });
 
   it("handles concurrent decode calls independently", async () => {
-    vi.mocked(invoke)
-      .mockResolvedValueOnce("data:image/webp;base64,first=")
-      .mockResolvedValueOnce("data:image/webp;base64,second=");
+    vi.mocked(invoke).mockResolvedValueOnce("data:image/webp;base64,first=").mockResolvedValueOnce("data:image/webp;base64,second=");
 
-    const [r1, r2] = await Promise.all([
-      decodeFrame("/test/v1.mp4", 1.0, 1920, 1080),
-      decodeFrame("/test/v2.mp4", 2.0, 1920, 1080),
-    ]);
+    const [r1, r2] = await Promise.all([decodeFrame("/test/v1.mp4", 1.0, 1920, 1080), decodeFrame("/test/v2.mp4", 2.0, 1920, 1080)]);
 
     expect(r1).toBe("data:image/webp;base64,first=");
     expect(r2).toBe("data:image/webp;base64,second=");
@@ -142,7 +135,7 @@ describe("decodeFrame", () => {
   });
 
   it("handles slow invoke response", async () => {
-    vi.mocked(invoke).mockImplementationOnce(() => new Promise(r => setTimeout(() => r("data:image/webp;base64,slow="), 50)));
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise((r) => setTimeout(() => r("data:image/webp;base64,slow="), 50)));
     const result = await decodeFrame("/test/video.mp4", 1.0, 1920, 1080);
     expect(result).toBe("data:image/webp;base64,slow=");
   });
@@ -179,26 +172,35 @@ describe("decodeFramesStreaming", () => {
 
     await decodeFramesStreaming("/test/video.mp4", [1.0, 2.0], DensityLevel.Medium, 120, 68, 10, onTile);
 
-    expect(invoke).toHaveBeenCalledWith("decode_frames_streaming", expect.objectContaining({
-      videoPath: "/test/video.mp4",
-      timestamps: [1.0, 2.0],
-      density: "medium",
-      width: 120,
-      height: 68,
-      duration: 10,
-    }));
+    expect(invoke).toHaveBeenCalledWith(
+      "decode_frames_streaming",
+      expect.objectContaining({
+        videoPath: "/test/video.mp4",
+        timestamps: [1.0, 2.0],
+        density: "medium",
+        width: 120,
+        height: 68,
+        duration: 10,
+      }),
+    );
     // Channel is passed as onTile argument
-    expect(invoke).toHaveBeenCalledWith("decode_frames_streaming", expect.objectContaining({
-      onTile: expect.any(Object),
-    }));
+    expect(invoke).toHaveBeenCalledWith(
+      "decode_frames_streaming",
+      expect.objectContaining({
+        onTile: expect.any(Object),
+      }),
+    );
   });
 
   it("normalizes file:// URLs before invoking", async () => {
     vi.mocked(invoke).mockResolvedValueOnce(undefined);
     await decodeFramesStreaming("file:///Users/test/clip.mov", [1.0], DensityLevel.Low, 80, 45, 5, vi.fn());
-    expect(invoke).toHaveBeenCalledWith("decode_frames_streaming", expect.objectContaining({
-      videoPath: "/Users/test/clip.mov",
-    }));
+    expect(invoke).toHaveBeenCalledWith(
+      "decode_frames_streaming",
+      expect.objectContaining({
+        videoPath: "/Users/test/clip.mov",
+      }),
+    );
   });
 
   it("propagates errors from invoke", async () => {

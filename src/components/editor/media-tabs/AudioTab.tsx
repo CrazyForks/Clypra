@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Search, Play, Plus, Heart } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/Tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/Tooltip";
 import type { TabProps } from "./types";
 
 export const AudioTab: React.FC<TabProps> = ({ onAddToTimeline }) => {

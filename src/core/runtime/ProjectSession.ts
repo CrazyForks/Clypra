@@ -308,7 +308,7 @@ export class ProjectSession {
   // ─── Private Helpers ────────────────────────────────────────────────────
 
   private async _initializeStores(): Promise<void> {
-    const { useUIStore } = await import("../../store/uiStore");
+    const { useUIStore } = await import("@/store/uiStore");
 
     // Reset UI store (selection state, preview mode)
     // Timeline store is managed by projectStore - don't touch it here

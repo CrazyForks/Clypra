@@ -5,7 +5,7 @@
  * This allows gradual migration without breaking existing code.
  */
 
-import type { Clip, Track } from "../../types";
+import type { Clip, Track } from "@types";
 import type { CompositorClip, ClipRole } from "../compositor/types";
 
 /**
