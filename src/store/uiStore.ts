@@ -92,6 +92,7 @@ interface UIStore {
 
 const PREVIEW_ZOOM_MIN = 0.1;
 const PREVIEW_ZOOM_MAX = 5.0;
+const PREVIEW_ZOOM_SNAP_EPSILON = 0.03; // 3% magnet band for fit/100%
 
 export const useUIStore = create<UIStore>((set, get) => ({
   selectedClipIds: [],
@@ -222,7 +223,11 @@ export const useUIStore = create<UIStore>((set, get) => ({
 
   // Preview viewport actions (editor-only zoom/pan)
   setPreviewZoom: (zoom) => {
-    const clamped = Math.max(PREVIEW_ZOOM_MIN, Math.min(PREVIEW_ZOOM_MAX, zoom));
+    let clamped = Math.max(PREVIEW_ZOOM_MIN, Math.min(PREVIEW_ZOOM_MAX, zoom));
+    // Magnetic snap around fit zoom (1.0 in current preview viewport model).
+    if (Math.abs(clamped - 1.0) <= PREVIEW_ZOOM_SNAP_EPSILON) {
+      clamped = 1.0;
+    }
     set((state) => ({
       previewViewport: { ...state.previewViewport, zoom: clamped },
     }));

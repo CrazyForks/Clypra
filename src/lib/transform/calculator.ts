@@ -14,6 +14,7 @@ import type { Clip, TransformHandle, TransformConstraints } from "@/types";
 
 const MIN_CLIP_SIZE = 24; // Minimum practical transform target
 const MAX_CLIP_SCALE_FROM_CANVAS = 8; // Professional guardrail against runaway scaling
+const ASPECT_RATIO_SNAP_EPSILON = 0.02; // 2% snap band for "perfect shape" feel
 
 /**
  * Calculate new transform from handle drag operation.
@@ -90,17 +91,26 @@ function handleMove(clip: Clip, delta: { x: number; y: number }, constraints: Tr
 function handleCornerDrag(clip: Clip, handle: "nw" | "ne" | "sw" | "se", delta: { x: number; y: number }, constraints: TransformConstraints): Partial<Clip> {
   const aspectRatio = clip.sourceAspectRatio ?? clip.width / clip.height;
   const isLocked = constraints.aspectRatioLocked;
-
-  // Determine scale direction based on handle
-  const scaleX = handle === "ne" || handle === "se" ? 1 : -1;
-  const scaleY = handle === "sw" || handle === "se" ? 1 : -1;
-
-  let newWidth = clip.width + delta.x * scaleX;
-  let newHeight = clip.height + delta.y * scaleY;
+  // Professional NLE feel: corner resize scales around the clip center.
+  // Corner drag direction still controls whether size grows or shrinks,
+  // but geometry expands/contracts symmetrically on both sides.
+  const centerX = clip.x + clip.width / 2;
+  const centerY = clip.y + clip.height / 2;
+  const dirX = handle === "ne" || handle === "se" ? 1 : -1;
+  const dirY = handle === "sw" || handle === "se" ? 1 : -1;
+  const primaryDelta = Math.abs(delta.x) >= Math.abs(delta.y) ? delta.x * dirX : delta.y * dirY;
+  let newWidth = clip.width + primaryDelta * 2;
+  let newHeight = clip.height + primaryDelta * 2;
 
   const clamped = clampDimensions(newWidth, newHeight, clip, constraints, isLocked);
   newWidth = clamped.width;
   newHeight = clamped.height;
+
+  if (!isLocked) {
+    const snapped = snapToSourceAspectIfNear(clip, newWidth, newHeight, constraints);
+    newWidth = snapped.width;
+    newHeight = snapped.height;
+  }
 
   if (isLocked) {
     // Maintain aspect ratio - use the dimension that changed more
@@ -114,19 +124,9 @@ function handleCornerDrag(clip: Clip, handle: "nw" | "ne" | "sw" | "se", delta: 
     }
   }
 
-  // Calculate new position (opposite corner stays fixed)
-  let newX = clip.x;
-  let newY = clip.y;
-
-  if (handle === "nw" || handle === "sw") {
-    // Left edge moved
-    newX = clip.x + (clip.width - newWidth);
-  }
-
-  if (handle === "nw" || handle === "ne") {
-    // Top edge moved
-    newY = clip.y + (clip.height - newHeight);
-  }
+  // Re-center after resize so scaling happens symmetrically from center.
+  const newX = centerX - newWidth / 2;
+  const newY = centerY - newHeight / 2;
 
   return {
     x: newX,
@@ -195,6 +195,12 @@ function handleEdgeDrag(clip: Clip, handle: "n" | "s" | "e" | "w", delta: { x: n
   newWidth = clamped.width;
   newHeight = clamped.height;
 
+  if (!isLocked) {
+    const snapped = snapToSourceAspectIfNear(clip, newWidth, newHeight, constraints);
+    newWidth = snapped.width;
+    newHeight = snapped.height;
+  }
+
   return {
     x: newX,
     y: newY,
@@ -222,6 +228,26 @@ function clampDimensions(width: number, height: number, clip: Clip, constraints:
   }
 
   return { width: w, height: h };
+}
+
+function snapToSourceAspectIfNear(clip: Clip, width: number, height: number, constraints: TransformConstraints): { width: number; height: number } {
+  const targetAspect = clip.sourceAspectRatio ?? clip.width / Math.max(1, clip.height);
+  if (!Number.isFinite(targetAspect) || targetAspect <= 0) return { width, height };
+
+  const currentAspect = width / Math.max(1, height);
+  const relError = Math.abs(currentAspect - targetAspect) / targetAspect;
+  if (relError > ASPECT_RATIO_SNAP_EPSILON) return { width, height };
+
+  // Snap along the dominant dimension to avoid perceptible jump direction changes.
+  const widthScaledHeight = width / targetAspect;
+  const heightScaledWidth = height * targetAspect;
+  const useWidthAsAnchor = Math.abs(width - clip.width) >= Math.abs(height - clip.height);
+
+  const candidate = useWidthAsAnchor
+    ? { width, height: widthScaledHeight }
+    : { width: heightScaledWidth, height };
+
+  return clampDimensions(candidate.width, candidate.height, clip, constraints, false);
 }
 
 /**
