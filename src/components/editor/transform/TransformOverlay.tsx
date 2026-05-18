@@ -27,6 +27,7 @@ const traceSelect = (...args: unknown[]) => {
   console.log("[SelectTrace][TransformOverlay]", ...args);
 };
 const CENTER_GUIDE_SNAP_PX = 8;
+const CENTER_MAGNET_SNAP_PX = 12;
 
 interface TransformOverlayProps {
   /** Canvas dimensions for coordinate conversion */
@@ -51,15 +52,7 @@ interface TransformOverlayProps {
  * inside the display viewport div, so the letterbox offset relative to
  * the overlay is always (0, 0).
  */
-function mouseToCanvas(
-  clientX: number,
-  clientY: number,
-  overlayRect: DOMRect,
-  viewport: ViewportTransform,
-  canvasWidth: number,
-  canvasHeight: number,
-  scale: number,
-): { x: number; y: number } {
+function mouseToCanvas(clientX: number, clientY: number, overlayRect: DOMRect, viewport: ViewportTransform, canvasWidth: number, canvasHeight: number, scale: number): { x: number; y: number } {
   // Step 1: Screen → overlay-local (subtract overlay's screen position)
   const localX = clientX - overlayRect.left;
   const localY = clientY - overlayRect.top;
@@ -265,6 +258,25 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
       };
 
       const newTransform = calculateTransform(startClip, activeTransform.handle, activeTransform.startMousePos, canvasCoords, constraints, startAngleRef.current);
+      // Professional magnetic center snap: while moving/resizing, snap clip center
+      // to canvas center when within threshold. Rotation is excluded.
+      if (activeTransform.handle !== "rotate") {
+        const nextX = newTransform.x ?? startClip.x;
+        const nextY = newTransform.y ?? startClip.y;
+        const nextW = newTransform.width ?? startClip.width;
+        const nextH = newTransform.height ?? startClip.height;
+        const nextCenterX = nextX + nextW / 2;
+        const nextCenterY = nextY + nextH / 2;
+        const canvasCenterX = canvasWidth / 2;
+        const canvasCenterY = canvasHeight / 2;
+
+        if (Math.abs(nextCenterX - canvasCenterX) <= CENTER_MAGNET_SNAP_PX) {
+          newTransform.x = canvasCenterX - nextW / 2;
+        }
+        if (Math.abs(nextCenterY - canvasCenterY) <= CENTER_MAGNET_SNAP_PX) {
+          newTransform.y = canvasCenterY - nextH / 2;
+        }
+      }
       traceSelect("transform mousemove", { clipId: activeTransform.clipId, handle: activeTransform.handle, x: newTransform.x, y: newTransform.y, width: newTransform.width, height: newTransform.height });
 
       // Optimistic update (no history yet)
@@ -300,7 +312,6 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
       rotation: finalClip.rotation,
     };
 
-
     // Only create command if something actually changed
     const hasChanged = oldTransform.x !== newTransform.x || oldTransform.y !== newTransform.y || oldTransform.width !== newTransform.width || oldTransform.height !== newTransform.height || oldTransform.rotation !== newTransform.rotation;
 
@@ -322,6 +333,12 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
       };
     }
   }, [isDragging, handleMouseMove, handleMouseUp]);
+
+  React.useEffect(() => {
+    return () => {
+      document.body.style.cursor = "";
+    };
+  }, []);
 
   // Convert clip bounds to screen coordinates for handle rendering
   if (!selectedClip) {
@@ -394,7 +411,7 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
 
       {/* Transform border - visual only */}
       <div
-        className="absolute border-2 border-white pointer-events-none shadow-lg"
+        className="absolute border-2 pointer-events-none shadow-lg"
         style={{
           left: handleDisplayX,
           top: handleDisplayY,
@@ -402,7 +419,8 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
           height: handleDisplayHeight,
           transform: `rotate(${rotation}deg)`,
           transformOrigin: "center",
-          boxShadow: "0 0 0 1px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3)",
+          borderColor: "var(--color-accent)",
+          boxShadow: "0 0 0 1px var(--color-border), 0 2px 8px rgba(0,0,0,0.3)",
           zIndex: 10,
         }}
       />
@@ -416,8 +434,7 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
             top: 0,
             width: 1,
             height: displayHeight,
-            background: "rgba(59,130,246,0.95)",
-            boxShadow: "0 0 0 1px rgba(59,130,246,0.3)",
+            background: "var(--color-accent)",
             zIndex: 14,
           }}
         />
@@ -430,8 +447,7 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
             top: centerScreen.y,
             width: displayWidth,
             height: 1,
-            background: "rgba(59,130,246,0.95)",
-            boxShadow: "0 0 0 1px rgba(59,130,246,0.3)",
+            background: "var(--color-accent)",
             zIndex: 14,
           }}
         />
@@ -481,31 +497,30 @@ interface HandleProps {
 
 const Handle: React.FC<HandleProps> = ({ position, onMouseDown, scale = 1, left, top, width, height, rotation }) => {
   const getHandleStyle = (): React.CSSProperties => {
-    const handleSize = 14;
-    const handleRadius = handleSize / 2;
+    const handleSize = 10;
+    const handleInset = 2;
     const baseStyle: React.CSSProperties = {
       position: "absolute",
       width: `${handleSize}px`,
       height: `${handleSize}px`,
-      backgroundColor: "white",
-      border: "2px solid #3b82f6",
+      backgroundColor: "var(--color-text-primary)",
       borderRadius: "50%",
-      cursor: "default",
+      // cursor: "default",
       transform: "translate(-50%, -50%)",
       boxShadow: "0 2px 4px rgba(0,0,0,0.3)",
-      zIndex: 20,
+      zIndex: 20000,
       pointerEvents: "auto",
     };
 
     switch (position) {
       case "nw":
-        return { ...baseStyle, left: left + handleRadius, top: top + handleRadius, cursor: "nw-resize" };
+        return { ...baseStyle, left: left + handleInset, top: top + handleInset, cursor: "nw-resize" };
       case "ne":
-        return { ...baseStyle, left: left + width - handleRadius, top: top + handleRadius, cursor: "ne-resize" };
+        return { ...baseStyle, left: left + width - handleInset, top: top + handleInset, cursor: "ne-resize" };
       case "sw":
-        return { ...baseStyle, left: left + handleRadius, top: top + height - handleRadius, cursor: "sw-resize" };
+        return { ...baseStyle, left: left + handleInset, top: top + height - handleInset, cursor: "sw-resize" };
       case "se":
-        return { ...baseStyle, left: left + width - handleRadius, top: top + height - handleRadius, cursor: "se-resize" };
+        return { ...baseStyle, left: left + width - handleInset, top: top + height - handleInset, cursor: "se-resize" };
       case "rotate": {
         // Scale-compensated offset so the rotation handle stays at a constant
         // visual distance (~30px) regardless of viewport zoom.
@@ -514,7 +529,7 @@ const Handle: React.FC<HandleProps> = ({ position, onMouseDown, scale = 1, left,
           ...baseStyle,
           left: left + width / 2,
           top: top - offset,
-          backgroundColor: "#3b82f6",
+          backgroundColor: "var(--color-accent)",
           cursor: "grab",
           width: "16px",
           height: "16px",
@@ -525,14 +540,26 @@ const Handle: React.FC<HandleProps> = ({ position, onMouseDown, scale = 1, left,
     }
   };
 
+  const style = getHandleStyle();
+  const resolvedCursor = typeof style.cursor === "string" ? style.cursor : "default";
+
   return (
     <div
       style={{
-        ...getHandleStyle(),
-        transform: `${getHandleStyle().transform ?? "translate(-50%, -50%)"} rotate(${rotation}deg)`,
+        ...style,
+        transform: `${style.transform ?? "translate(-50%, -50%)"} rotate(${rotation}deg)`,
         transformOrigin: "center",
       }}
       onMouseDown={onMouseDown}
+      onMouseEnter={() => {
+        document.body.style.setProperty("cursor", resolvedCursor, "important");
+      }}
+      onMouseMove={() => {
+        document.body.style.setProperty("cursor", resolvedCursor, "important");
+      }}
+      onMouseLeave={() => {
+        document.body.style.removeProperty("cursor");
+      }}
       data-transform-handle={position}
     />
   );

@@ -92,7 +92,7 @@ interface UIStore {
 
 const PREVIEW_ZOOM_MIN = 0.1;
 const PREVIEW_ZOOM_MAX = 5.0;
-const PREVIEW_ZOOM_SNAP_EPSILON = 0.03; // 3% magnet band for fit/100%
+const PREVIEW_ZOOM_SNAP_EPSILON = 0.005; // tight band so wheel remains responsive
 
 export const useUIStore = create<UIStore>((set, get) => ({
   selectedClipIds: [],
@@ -223,9 +223,14 @@ export const useUIStore = create<UIStore>((set, get) => ({
 
   // Preview viewport actions (editor-only zoom/pan)
   setPreviewZoom: (zoom) => {
+    const prevZoom = get().previewViewport.zoom;
     let clamped = Math.max(PREVIEW_ZOOM_MIN, Math.min(PREVIEW_ZOOM_MAX, zoom));
     // Magnetic snap around fit zoom (1.0 in current preview viewport model).
-    if (Math.abs(clamped - 1.0) <= PREVIEW_ZOOM_SNAP_EPSILON) {
+    // Snap only when crossing near fit or landing very close from a non-near state.
+    const prevNearFit = Math.abs(prevZoom - 1.0) <= PREVIEW_ZOOM_SNAP_EPSILON;
+    const nextNearFit = Math.abs(clamped - 1.0) <= PREVIEW_ZOOM_SNAP_EPSILON;
+    const crossedFit = (prevZoom < 1.0 && clamped > 1.0) || (prevZoom > 1.0 && clamped < 1.0);
+    if (nextNearFit && (crossedFit || !prevNearFit)) {
       clamped = 1.0;
     }
     set((state) => ({

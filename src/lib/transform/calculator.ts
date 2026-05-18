@@ -12,7 +12,8 @@
 
 import type { Clip, TransformHandle, TransformConstraints } from "@/types";
 
-const MIN_CLIP_SIZE = 24; // Minimum practical transform target
+const MIN_CLIP_SIZE_ABSOLUTE = 64; // Absolute floor (px)
+const MIN_CLIP_SIZE_RATIO_OF_SHORT_EDGE = 0.12; // 12% of sequence short edge
 const MAX_CLIP_SCALE_FROM_CANVAS = 8; // Professional guardrail against runaway scaling
 const ASPECT_RATIO_SNAP_EPSILON = 0.02; // 2% snap band for "perfect shape" feel
 
@@ -374,10 +375,12 @@ export function isPointInClip(point: { x: number; y: number }, clip: Clip): bool
  * Get default transform constraints for a clip.
  */
 export function getDefaultConstraints(canvasWidth: number, canvasHeight: number, aspectRatioLocked: boolean = true): TransformConstraints {
+  const shortEdge = Math.max(1, Math.min(canvasWidth, canvasHeight));
+  const dynamicMin = Math.max(MIN_CLIP_SIZE_ABSOLUTE, Math.round(shortEdge * MIN_CLIP_SIZE_RATIO_OF_SHORT_EDGE));
   return {
     aspectRatioLocked,
-    minWidth: MIN_CLIP_SIZE,
-    minHeight: MIN_CLIP_SIZE,
+    minWidth: dynamicMin,
+    minHeight: dynamicMin,
     maxWidth: canvasWidth * MAX_CLIP_SCALE_FROM_CANVAS,
     maxHeight: canvasHeight * MAX_CLIP_SCALE_FROM_CANVAS,
     canvasWidth,
