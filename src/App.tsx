@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { LaunchScreen } from "@/components/screens/LaunchScreen";
 import { EditorScreen } from "@/components/screens/EditorScreen";
+import { WebShowcase } from "@/components/screens/WebShowcase";
 import { TooltipProvider } from "@/components/ui/Tooltip";
 import { useProjectStore } from "@/store/projectStore";
 import { useUIStore } from "@/store/uiStore";
@@ -11,13 +12,21 @@ import { SettingsModal } from "./components/ui/SettingsModal";
 
 const isExternalOrDataUrl = (value: string) => value.startsWith("data:") || value.startsWith("http") || value.startsWith("asset://");
 
+const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
 const App = () => {
   const { project, createProject, loadProject, setRecentProjects } = useProjectStore();
   const [isLoading, setIsLoading] = useState(true);
+  const [showSandbox, setShowSandbox] = useState(false);
   const { showSettingsModal, toggleSettingsModal } = useUIStore();
 
   useEffect(() => {
     const initializeApp = async () => {
+      if (!isTauri) {
+        setRecentProjects([]);
+        setIsLoading(false);
+        return;
+      }
       try {
         const { convertFileSrc, invoke } = await import("@tauri-apps/api/core");
         const projectsJson: string[] = await invoke("get_recent_projects");
@@ -135,6 +144,10 @@ const App = () => {
         </div>
       </div>
     );
+  }
+
+  if (!isTauri && !showSandbox) {
+    return <WebShowcase onLaunchDemo={() => setShowSandbox(true)} />;
   }
 
   return (

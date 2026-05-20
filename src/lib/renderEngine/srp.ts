@@ -81,6 +81,7 @@ let _activeConfig: SrpConfig = { ...DEFAULT_SRP_CONFIG };
  */
 export function setSrpConfig(config: SrpConfig): void {
   if (!validateSrpConfig(config)) {
+    console.warn("Invalid SRP config", config);
     _activeConfig = { ...DEFAULT_SRP_CONFIG };
     return;
   }

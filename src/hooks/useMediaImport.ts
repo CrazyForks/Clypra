@@ -6,12 +6,143 @@ import type { MediaAsset, VideoMetadata } from "../types";
 import { generateSimpleWaveform } from "../lib/audioWaveformGenerator";
 import { generateId } from "@/lib/id";
 
+const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+const getBrowserMediaMetadata = (file: File, type: "video" | "audio" | "image"): Promise<{ duration: number; width: number; height: number }> => {
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file);
+    if (type === "image") {
+      const img = new Image();
+      img.onload = () => {
+        resolve({ duration: 5, width: img.naturalWidth, height: img.naturalHeight });
+        URL.revokeObjectURL(objectUrl);
+      };
+      img.onerror = () => {
+        resolve({ duration: 5, width: 1920, height: 1080 });
+        URL.revokeObjectURL(objectUrl);
+      };
+      img.src = objectUrl;
+    } else if (type === "video") {
+      const video = document.createElement("video");
+      video.preload = "metadata";
+      video.onloadedmetadata = () => {
+        resolve({
+          duration: video.duration || 10,
+          width: video.videoWidth || 1920,
+          height: video.videoHeight || 1080,
+        });
+        URL.revokeObjectURL(objectUrl);
+      };
+      video.onerror = () => {
+        resolve({ duration: 10, width: 1920, height: 1080 });
+        URL.revokeObjectURL(objectUrl);
+      };
+      video.src = objectUrl;
+    } else {
+      const audio = document.createElement("audio");
+      audio.preload = "metadata";
+      audio.onloadedmetadata = () => {
+        resolve({ duration: audio.duration || 10, width: 0, height: 0 });
+        URL.revokeObjectURL(objectUrl);
+      };
+      audio.onerror = () => {
+        resolve({ duration: 10, width: 0, height: 0 });
+        URL.revokeObjectURL(objectUrl);
+      };
+      audio.src = objectUrl;
+    }
+  });
+};
+
 export const useMediaImport = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ type: "success" | "warning"; message: string } | null>(null);
   const { addMediaAsset, mediaAssets } = useProjectStore();
 
   const importMedia = async () => {
+    if (!isTauri) {
+      return new Promise<void>((resolve) => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.multiple = true;
+        input.accept = "video/*,audio/*,image/*";
+        input.onchange = async (e) => {
+          const files = Array.from((e.target as HTMLInputElement).files || []);
+          if (files.length === 0) {
+            resolve();
+            return;
+          }
+          setIsLoading(true);
+          let importedCount = 0;
+          let skippedCount = 0;
+
+          for (const file of files) {
+            const path = URL.createObjectURL(file); // Object URL acts as the path in the browser sandbox
+            const filename = file.name;
+            const type = getMediaType(filename);
+
+            const existingAsset = mediaAssets.find((a) => a.name === filename);
+            if (existingAsset) {
+              skippedCount++;
+              continue;
+            }
+
+            const metadata = await getBrowserMediaMetadata(file, type);
+
+            let posterFrame: string | undefined;
+            if (type === "audio") {
+              posterFrame = generateSimpleWaveform({
+                width: 160,
+                height: 90,
+                barCount: 32,
+                barColor: "#22d3ee",
+                backgroundColor: "#1e293b",
+              });
+            } else if (type === "video") {
+              posterFrame = path; // In browser, video URL can render directly
+            } else if (type === "image") {
+              posterFrame = path;
+            }
+
+            const asset: MediaAsset = {
+              id: generateId("asset"),
+              name: filename,
+              path,
+              type,
+              duration: metadata.duration,
+              width: metadata.width,
+              height: metadata.height,
+              posterFrame,
+              size: file.size,
+            };
+
+            addMediaAsset(asset);
+            importedCount++;
+          }
+
+          if (importedCount > 0 && skippedCount > 0) {
+            setToastMessage({
+              type: "warning",
+              message: `Imported ${importedCount} file(s). ${skippedCount} duplicate(s) skipped.`,
+            });
+          } else if (skippedCount > 0) {
+            setToastMessage({
+              type: "warning",
+              message: `${skippedCount} file(s) already imported.`,
+            });
+          } else if (importedCount > 0) {
+            setToastMessage({
+              type: "success",
+              message: `Successfully imported ${importedCount} file(s).`,
+            });
+          }
+          setIsLoading(false);
+          resolve();
+        };
+        input.click();
+      });
+    }
+
     try {
       setIsLoading(true);
       const selected = await open({

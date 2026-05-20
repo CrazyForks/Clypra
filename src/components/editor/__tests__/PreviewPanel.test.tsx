@@ -43,6 +43,7 @@ describe("PreviewPanel timeline rendering", () => {
       translate: vi.fn(),
       rotate: vi.fn(),
       scale: vi.fn(),
+      setTransform: vi.fn(),
       fillText: vi.fn(),
       strokeText: vi.fn(),
       measureText: vi.fn(() => ({ width: 100 })),

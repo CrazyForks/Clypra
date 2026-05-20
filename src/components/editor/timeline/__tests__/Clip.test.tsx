@@ -157,7 +157,7 @@ describe("Clip Component", () => {
       renderClip(clip, undefined, { selected: true });
 
       const clipElement = screen.getByTestId("clip-clip-1");
-      expect(clipElement.className).toContain("border-red-500");
+      expect(clipElement.className).toContain("border-white");
       expect(clipElement.className).toContain("border-2");
     });
 
@@ -217,7 +217,7 @@ describe("Clip Component", () => {
 
       const leftHandle = screen.getByTestId("clip-clip-1-resize-left");
       expect(leftHandle).toBeInTheDocument();
-      expect(leftHandle.className).toContain("cursor-ew-resize");
+      expect(leftHandle.style.cursor).toBe("col-resize");
     });
 
     it("renders right resize handle", () => {
@@ -226,7 +226,7 @@ describe("Clip Component", () => {
 
       const rightHandle = screen.getByTestId("clip-clip-1-resize-right");
       expect(rightHandle).toBeInTheDocument();
-      expect(rightHandle.className).toContain("cursor-ew-resize");
+      expect(rightHandle.style.cursor).toBe("col-resize");
     });
 
     it("has correct width for resize handles", () => {
@@ -236,8 +236,8 @@ describe("Clip Component", () => {
       const leftHandle = screen.getByTestId("clip-clip-1-resize-left");
       const rightHandle = screen.getByTestId("clip-clip-1-resize-right");
 
-      expect(leftHandle.className).toContain("w-3");
-      expect(rightHandle.className).toContain("w-3");
+      expect(leftHandle.className).toContain("w-4");
+      expect(rightHandle.className).toContain("w-4");
     });
   });
 

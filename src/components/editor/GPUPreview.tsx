@@ -28,6 +28,71 @@ import { generateId } from "@/lib/id";
 import { invoke } from "@tauri-apps/api/core";
 import { normalizePathForTauriInvoke } from "@/lib/tauri";
 
+const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+interface HTML5VideoFallbackProps {
+  videoPath: string;
+  currentTime: number;
+  isPlaying: boolean;
+  width: number;
+  height: number;
+  onTimeUpdate?: (time: number) => void;
+  className?: string;
+}
+
+function HTML5VideoFallback({ videoPath, currentTime, isPlaying, onTimeUpdate, className }: HTML5VideoFallbackProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Sync isPlaying state
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (isPlaying) {
+      video.play().catch((err) => console.log("Video play interrupted:", err));
+    } else {
+      video.pause();
+    }
+  }, [isPlaying]);
+
+  // Sync currentTime when not playing (scrubbing)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || isPlaying) return;
+
+    if (Math.abs(video.currentTime - currentTime) > 0.1) {
+      video.currentTime = currentTime;
+    }
+  }, [currentTime, isPlaying]);
+
+  // Handle time update when playing
+  const handleTimeUpdate = () => {
+    const video = videoRef.current;
+    if (!video || !isPlaying || !onTimeUpdate) return;
+    onTimeUpdate(video.currentTime);
+  };
+
+  return (
+    <div className="relative w-full h-full flex items-center justify-center bg-black">
+      <video
+        ref={videoRef}
+        src={videoPath}
+        className={className}
+        onTimeUpdate={handleTimeUpdate}
+        playsInline
+        muted
+        style={{
+          maxWidth: "100%",
+          maxHeight: "100%",
+          width: "auto",
+          height: "auto",
+          objectFit: "contain",
+        }}
+      />
+    </div>
+  );
+}
+
 export interface GPUPreviewProps {
   videoPath: string;
   currentTime: number;
@@ -41,6 +106,20 @@ export interface GPUPreviewProps {
 }
 
 export function GPUPreview({ videoPath, currentTime, isPlaying, width, height, duration, frameRate = 30, onTimeUpdate, className }: GPUPreviewProps) {
+  if (!isTauri) {
+    return (
+      <HTML5VideoFallback
+        videoPath={videoPath}
+        currentTime={currentTime}
+        isPlaying={isPlaying}
+        width={width}
+        height={height}
+        onTimeUpdate={onTimeUpdate}
+        className={className}
+      />
+    );
+  }
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gpuCacheRef = useRef<GPUTextureCache | null>(null);
   const [useGPUCache, setUseGPUCache] = useState(false);

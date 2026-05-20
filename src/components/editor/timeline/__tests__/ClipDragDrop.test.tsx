@@ -6,6 +6,11 @@ import { Track } from "../Track";
 import { Clip } from "../Clip";
 import type { Track as TrackType, Clip as ClipType, MediaAsset } from "@/types";
 
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (path: string) => path,
+  invoke: vi.fn(),
+}));
+
 // Mock stores and hooks
 const mockAddClipFromAsset = vi.fn();
 const mockGetMediaAsset = vi.fn();

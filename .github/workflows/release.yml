@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -25,9 +26,16 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Get version from tag
+      - name: Get version
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        shell: bash
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          else
+            VERSION=$(node -p "require('./package.json').version")
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create Release
         id: create-release
@@ -35,7 +43,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.ref }}
+          tag_name: v${{ steps.get_version.outputs.VERSION }}
           release_name: Clypra v${{ steps.get_version.outputs.VERSION }}
           body: |
             ## What's New in v${{ steps.get_version.outputs.VERSION }}
@@ -140,12 +148,7 @@ jobs:
       - name: Install FFmpeg (Windows)
         if: matrix.platform == 'windows-latest'
         run: |
-          # Install vcpkg
-          git clone https://github.com/Microsoft/vcpkg.git C:\vcpkg
-          cd C:\vcpkg
-          .\bootstrap-vcpkg.bat
-          .\vcpkg integrate install
-          .\vcpkg install ffmpeg:x64-windows-static-md
+          vcpkg install ffmpeg:x64-windows-static-md
           echo "FFMPEG_DIR=C:\vcpkg\installed\x64-windows-static-md" >> $env:GITHUB_ENV
 
       - name: Install frontend dependencies

@@ -20,7 +20,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: vi.fn((value: string) => value),
 }));
 
-vi.mock("@@hooks/usePlayback", () => ({
+vi.mock("@/hooks/usePlayback", () => ({
   usePlayback: () => ({
     currentTime: 0,
     duration: 20,
@@ -35,7 +35,7 @@ vi.mock("@@hooks/usePlayback", () => ({
   }),
 }));
 
-vi.mock("@@hooks/useRenderRuntime", () => ({
+vi.mock("@/hooks/useRenderRuntime", () => ({
   useRenderRuntime: () => mockRuntimeRef.current,
 }));
 
@@ -119,6 +119,11 @@ describe("Timeline click behavior", () => {
   });
 
   it("does not seek when clicking interactive timeline elements", () => {
+    useTimelineStore.setState({
+      clips: [
+        { id: "c1", trackId: "track-1", mediaId: "m1", startTime: 0, duration: 3, trimIn: 0, trimOut: 3, x: 0, y: 0, width: 100, height: 100, opacity: 1, rotation: 0 },
+      ],
+    });
     render(<Timeline />);
 
     fireEvent.click(screen.getByText("Interactive Clip"));
