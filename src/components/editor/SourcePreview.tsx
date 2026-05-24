@@ -36,6 +36,8 @@ export const SourcePreview: React.FC = () => {
 
   // Get source context from active session and bind media element
   useEffect(() => {
+    if (sourceAsset?.type === "text") return;
+
     const session = getActiveSessionOrNull();
     const ctx = session?.sourceContext;
     if (!ctx) return;
@@ -65,6 +67,37 @@ export const SourcePreview: React.FC = () => {
     };
   }, [sourceAsset?.id, sourceAsset?.type, useGPU]);
 
+  // Virtual clock for text preview
+  useEffect(() => {
+    if (sourceAsset?.type !== "text") return;
+
+    setDuration(3.0);
+    setCurrentTime(0);
+    setIsPlaying(false);
+  }, [sourceAsset?.id, sourceAsset?.type]);
+
+  useEffect(() => {
+    if (sourceAsset?.type !== "text") return;
+    if (!isPlaying) return;
+
+    const timer = setInterval(() => {
+      setCurrentTime((prev) => {
+        if (prev >= 3.0) {
+          setIsPlaying(false);
+          return 3.0;
+        }
+        const next = prev + 0.016; // ~16ms steps
+        if (next >= 3.0) {
+          setIsPlaying(false);
+          return 3.0;
+        }
+        return next;
+      });
+    }, 16);
+
+    return () => clearInterval(timer);
+  }, [isPlaying, sourceAsset?.type]);
+
   // Reset when asset changes
   useEffect(() => {
     setUseGPU(USE_GPU_PREVIEW && sourceAsset?.type === "video");
@@ -72,10 +105,24 @@ export const SourcePreview: React.FC = () => {
   }, [sourceAsset?.id]);
 
   const handleSeek = useCallback((time: number) => {
+    if (sourceAsset?.type === "text") {
+      setCurrentTime(Math.max(0, Math.min(time, 3.0)));
+      return;
+    }
     sourceCtxRef.current?.seek(time);
-  }, []);
+  }, [sourceAsset?.type]);
 
   const handlePlayPause = useCallback(() => {
+    if (sourceAsset?.type === "text") {
+      setIsPlaying((prev) => {
+        const next = !prev;
+        if (next && currentTime >= 3.0) {
+          setCurrentTime(0);
+        }
+        return next;
+      });
+      return;
+    }
     const ctx = sourceCtxRef.current;
     if (!ctx) return;
     if (useGPU) {
@@ -88,7 +135,7 @@ export const SourcePreview: React.FC = () => {
         ctx.play();
       }
     }
-  }, [useGPU]);
+  }, [useGPU, sourceAsset?.type, currentTime]);
 
   const handlePlayMarkedRegion = useCallback(() => {
     sourceCtxRef.current?.playMarkedRegion();
@@ -225,8 +272,8 @@ export const SourcePreview: React.FC = () => {
   const hasMarks = sourceInPoint !== null || sourceOutPoint !== null;
   const hasCompleteMarks = sourceInPoint !== null && sourceOutPoint !== null;
 
-  const sourcePath = convertFileSrc(sourceAsset.path);
-  const mediaLabel = sourceAsset.type === "video" ? "video" : sourceAsset.type === "audio" ? "audio" : "image";
+  const sourcePath = sourceAsset.path ? convertFileSrc(sourceAsset.path) : "";
+  const mediaLabel = sourceAsset.type === "video" ? "video" : sourceAsset.type === "audio" ? "audio" : sourceAsset.type === "text" ? "text" : "image";
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-bg">
@@ -327,25 +374,36 @@ export const SourcePreview: React.FC = () => {
         inPoint={sourceInPoint}
         outPoint={sourceOutPoint}
         rightActions={
-          <>
-            <button onClick={handleMarkIn} className={`px-2 h-6 rounded text-[10px] font-medium transition-colors cursor-pointer ${sourceInPoint !== null && Math.abs(currentTime - sourceInPoint) < 0.1 ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-white/6"}`} title="Mark In (I)">
-              IN
-            </button>
-            <button onClick={handleMarkOut} className={`px-2 h-6 rounded text-[10px] font-medium transition-colors cursor-pointer ${sourceOutPoint !== null && Math.abs(currentTime - sourceOutPoint) < 0.1 ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-white/6"}`} title="Mark Out (O)">
-              OUT
-            </button>
-            {hasCompleteMarks && (
-              <button onClick={handlePlayMarkedRegion} className="flex items-center gap-1 px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors cursor-pointer" title="Play marked region">
-                <Play className="w-3 h-3" />
-                Play
-              </button>
-            )}
-            <div className="w-px h-4 bg-white/10 mx-1" />
-            <button onClick={handleAddToTimeline} disabled={!hasCompleteMarks} className={`flex items-center gap-1 px-2.5 h-6 rounded text-[10px] font-semibold transition-colors ${hasCompleteMarks ? "bg-green-600/90 hover:bg-green-600 text-white cursor-pointer" : "bg-text-muted/70 hover:bg-text-muted/90 text-white cursor-not-allowed"}`} title={hasCompleteMarks ? `Add ${markedDuration?.toFixed(2)}s to Timeline` : "Add to Track"}>
+          sourceAsset.type === "text" ? (
+            <button
+              onClick={handleAddToTimeline}
+              className="flex items-center gap-1 px-2.5 h-6 rounded text-[10px] font-semibold bg-green-600/90 hover:bg-green-600 text-white cursor-pointer transition-colors"
+              title="Add text to timeline"
+            >
               <Plus className="w-3 h-3" />
               Add
             </button>
-          </>
+          ) : (
+            <>
+              <button onClick={handleMarkIn} className={`px-2 h-6 rounded text-[10px] font-medium transition-colors cursor-pointer ${sourceInPoint !== null && Math.abs(currentTime - sourceInPoint) < 0.1 ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-white/6"}`} title="Mark In (I)">
+                IN
+              </button>
+              <button onClick={handleMarkOut} className={`px-2 h-6 rounded text-[10px] font-medium transition-colors cursor-pointer ${sourceOutPoint !== null && Math.abs(currentTime - sourceOutPoint) < 0.1 ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-white/6"}`} title="Mark Out (O)">
+                OUT
+              </button>
+              {hasCompleteMarks && (
+                <button onClick={handlePlayMarkedRegion} className="flex items-center gap-1 px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors cursor-pointer" title="Play marked region">
+                  <Play className="w-3 h-3" />
+                  Play
+                </button>
+              )}
+              <div className="w-px h-4 bg-white/10 mx-1" />
+              <button onClick={handleAddToTimeline} disabled={!hasCompleteMarks} className={`flex items-center gap-1 px-2.5 h-6 rounded text-[10px] font-semibold transition-colors ${hasCompleteMarks ? "bg-green-600/90 hover:bg-green-600 text-white cursor-pointer" : "bg-text-muted/70 hover:bg-text-muted/90 text-white cursor-not-allowed"}`} title={hasCompleteMarks ? `Add ${markedDuration?.toFixed(2)}s to Timeline` : "Add to Track"}>
+                <Plus className="w-3 h-3" />
+                Add
+              </button>
+            </>
+          )
         }
       />
     </div>
