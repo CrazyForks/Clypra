@@ -22,7 +22,7 @@ export interface SolarisInkConfig {
   fontSize?: number;
   letterSpacing?: number;
   lineHeight?: number;
-  fillType?: "solid" | "linear" | "radial" | "none";
+  fillType?: "solid" | "linear" | "radial" | "pattern" | "none";
   fillColor?: string;
   fillGradientAngle?: number;
   fillGradientStops?: Array<{ color: string; offset: number }>;

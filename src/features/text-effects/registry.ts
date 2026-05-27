@@ -280,3 +280,18 @@ register(CarbonShiftDefinition, CarbonShiftEngine);
 
 import { StealthContourEngine, StealthContourDefinition } from "./effects/StealthContour";
 register(StealthContourDefinition, StealthContourEngine);
+
+import { ToxBrimEngine, ToxBrimDefinition } from "./effects/ToxBrim";
+register(ToxBrimDefinition, ToxBrimEngine);
+
+import { VoltKineticMontserratChalk80pxStroke1Engine, VoltKineticMontserratChalk80pxStroke1Definition } from "./effects/VoltKineticMontserratChalk80pxStroke1";
+register(VoltKineticMontserratChalk80pxStroke1Definition, VoltKineticMontserratChalk80pxStroke1Engine);
+
+import { InfraredDriftMontserratNoise80pxEngine, InfraredDriftMontserratNoise80pxDefinition } from "./effects/InfraredDriftMontserratNoise80px";
+register(InfraredDriftMontserratNoise80pxDefinition, InfraredDriftMontserratNoise80pxEngine);
+
+import { CrimsonKineticMontserratComicsHalftone80pxGlowEngine, CrimsonKineticMontserratComicsHalftone80pxGlowDefinition } from "./effects/CrimsonKineticMontserratComicsHalftone80pxGlow";
+register(CrimsonKineticMontserratComicsHalftone80pxGlowDefinition, CrimsonKineticMontserratComicsHalftone80pxGlowEngine);
+
+import { CrimsonNeueBebasNeueSolid100pxGlowEngine, CrimsonNeueBebasNeueSolid100pxGlowDefinition } from "./effects/CrimsonNeueBebasNeueSolid100pxGlow";
+register(CrimsonNeueBebasNeueSolid100pxGlowDefinition, CrimsonNeueBebasNeueSolid100pxGlowEngine);

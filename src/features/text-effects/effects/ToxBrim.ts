@@ -1,4 +1,4 @@
-export interface EditorialVellumConfig {
+export interface ToxBrimConfig {
   width: number;
   height: number;
   text: string;
@@ -30,6 +30,21 @@ export interface EditorialVellumConfig {
   bevelHighlight?: string;
   bevelShadow?: string;
   bevelDirection?: "bottom-right" | "bottom" | "right";
+  bevelCoreColor?: string;
+  bevelEdgeColor?: string;
+  bevelEdgeWidth?: number;
+  bevelBlur?: number;
+  bevelBlurColor?: string;
+
+  stackEnabled?: boolean;
+  stackCount?: number;
+  stackOffsetX?: number;
+  stackOffsetY?: number;
+  stackOpacityDecay?: number;
+  stackColor1?: string;
+  stackColor2?: string;
+  stackColor3?: string;
+  stackColor4?: string;
   panelEnabled?: boolean;
   panelColor?: string;
   panelOpacity?: number;
@@ -52,52 +67,70 @@ export interface EditorialVellumConfig {
   }>;
 }
 
-export class EditorialVellumEngine {
-  private cfg: Required<EditorialVellumConfig>;
+export class ToxBrimEngine {
+  private cfg: Required<ToxBrimConfig>;
 
-  constructor(config: EditorialVellumConfig) {
+  constructor(config: ToxBrimConfig) {
     // Merge provided configuration with static studio defaults
-    const defaults: Required<EditorialVellumConfig> = {
+    const defaults: Required<ToxBrimConfig> = {
       width: 800,
       height: 200,
-      text: "Classic Ink",
-      fontFamily: "Playfair Display",
-      fontWeight: 700,
+      text: "STROKE",
+      fontFamily: "Oswald",
+      fontWeight: 900,
       fontStyle: "normal",
-      fontSize: 85,
-      letterSpacing: 1,
+      fontSize: 140,
+      letterSpacing: 3,
       lineHeight: 1.2,
-      fillType: "linear",
+      fillType: "solid",
       fillColor: "#FFFFFF",
       fillGradientAngle: 90,
       fillGradientStops: [
         {
-          color: "#FDFBF7",
+          color: "#FFFFFF",
           offset: 0,
         },
         {
-          color: "#EAE5D9",
+          color: "#E0E0E0",
+          offset: 50,
+        },
+        {
+          color: "#ffffff",
           offset: 100,
         },
       ],
       strokeEnabled: true,
-      strokeColor: "#1E1E26",
+      strokeColor: "#7a7a7a",
       strokeWidth: 2,
       strokePosition: "outside",
       strokeOpacity: 100,
       strokeLineJoin: "round",
-      shadowEnabled: true,
-      shadowColor: "#3D2B1F",
-      shadowBlur: 14,
-      shadowOffsetX: 6,
-      shadowOffsetY: 6,
-      shadowOpacity: 90,
+      shadowEnabled: false,
+      shadowColor: "#000000",
+      shadowBlur: 10,
+      shadowOffsetX: 5,
+      shadowOffsetY: 5,
+      shadowOpacity: 80,
       shadowType: "drop",
-      bevelEnabled: false,
+      bevelEnabled: true,
       bevelDepth: 5,
       bevelHighlight: "#FFFFFF",
-      bevelShadow: "#000000",
-      bevelDirection: "bottom-right",
+      bevelShadow: "#e12323",
+      bevelDirection: "right",
+      bevelCoreColor: "#000000",
+      bevelEdgeColor: "#ffffff",
+      bevelEdgeWidth: 5.5,
+      bevelBlur: 0,
+      bevelBlurColor: "#000000",
+      stackEnabled: false,
+      stackCount: 3,
+      stackOffsetX: 10,
+      stackOffsetY: -10,
+      stackOpacityDecay: 20,
+      stackColor1: "#FF7C00",
+      stackColor2: "#00FFDD",
+      stackColor3: "#FF00AA",
+      stackColor4: "#AA00FF",
       panelEnabled: false,
       panelColor: "#1E1E26",
       panelOpacity: 80,
@@ -146,14 +179,14 @@ export class EditorialVellumEngine {
   }
 
   drawFrame(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, ghostFrames?: ImageData[]): void {
-    const { width, height, text, fontFamily, fontWeight, fontStyle, fontSize, letterSpacing, lineHeight, fillType, fillColor, fillGradientAngle, fillGradientStops, strokeEnabled, strokeColor, strokeWidth, strokePosition, strokeOpacity, strokeLineJoin, shadowEnabled, shadowColor, shadowBlur, shadowOffsetX, shadowOffsetY, shadowOpacity, shadowType, bevelEnabled, bevelDepth, bevelHighlight, bevelShadow, bevelDirection, panelEnabled, panelColor, panelOpacity, panelRadius, panelPaddingX, panelPaddingY, panelStrokeEnabled, panelStrokeColor, panelStrokeWidth, textPosX, textPosY } = this.cfg;
+    const { width, height, text, fontFamily, fontWeight, fontStyle, fontSize, letterSpacing, lineHeight, fillType, fillColor, fillGradientAngle, fillGradientStops, strokeEnabled, strokeColor, strokeWidth, strokePosition, strokeOpacity, strokeLineJoin, shadowEnabled, shadowColor, shadowBlur, shadowOffsetX, shadowOffsetY, shadowOpacity, shadowType, bevelEnabled, bevelDepth, bevelHighlight, bevelShadow, bevelDirection, bevelCoreColor, bevelEdgeColor, bevelEdgeWidth, bevelBlur, bevelBlurColor, stackEnabled, stackCount, stackOffsetX, stackOffsetY, stackOpacityDecay, stackColor1, stackColor2, stackColor3, stackColor4, panelEnabled, panelColor, panelOpacity, panelRadius, panelPaddingX, panelPaddingY, panelStrokeEnabled, panelStrokeColor, panelStrokeWidth, textPosX, textPosY } = this.cfg;
 
     // Clear dynamic context canvas - Absolutely no color bleed background fills allowed
     ctx.clearRect(0, 0, width, height);
     ctx.imageSmoothingEnabled = true;
 
     // Set text font properties
-    const fontStr = `${fontStyle} ${fontWeight} ${fontSize}px "${fontFamily}"`;
+    const fontStr = fontStyle + " " + fontWeight + " " + fontSize + 'px "' + fontFamily + '"';
     ctx.font = fontStr;
     ctx.lineJoin = strokeLineJoin;
 
@@ -186,7 +219,7 @@ export class EditorialVellumEngine {
     const lineWidths = lines.map((line) => {
       const originalSpacing = (ctx as any).letterSpacing || "normal";
       if (letterSpacing !== 0) {
-        (ctx as any).letterSpacing = `${letterSpacing}px`;
+        (ctx as any).letterSpacing = letterSpacing + "px";
       }
       const w = ctx.measureText(line).width;
       (ctx as any).letterSpacing = originalSpacing;
@@ -208,7 +241,7 @@ export class EditorialVellumEngine {
     const renderLines = (mode: "fill" | "stroke", overrideStyle?: string | CanvasGradient, offsetX = 0, offsetY = 0) => {
       const savedLetterSpacing = (ctx as any).letterSpacing || "normal";
       if (letterSpacing !== 0) {
-        (ctx as any).letterSpacing = `${letterSpacing}px`;
+        (ctx as any).letterSpacing = letterSpacing + "px";
       }
 
       if (overrideStyle) {
@@ -244,7 +277,7 @@ export class EditorialVellumEngine {
 
       const savedLetterSpacing = (ctx as any).letterSpacing || "normal";
       if (letterSpacing !== 0) {
-        (ctx as any).letterSpacing = `${letterSpacing}px`;
+        (ctx as any).letterSpacing = letterSpacing + "px";
       }
 
       const prevStyle = mode === "fill" ? ctx.fillStyle : ctx.strokeStyle;
@@ -328,7 +361,7 @@ export class EditorialVellumEngine {
     }
 
     // 4. Glitch RGB Splitting simulation (if applicable)
-    const isGlitchEffect = "EditorialVellum".toLowerCase().includes("glitch") || text === "SYSTEM ERR";
+    const isGlitchEffect = "ToxBrim".toLowerCase().includes("glitch") || text === "SYSTEM ERR";
     if (isGlitchEffect) {
       ctx.save();
       ctx.globalAlpha = 0.8;
@@ -355,6 +388,38 @@ export class EditorialVellumEngine {
         renderLines("fill", sliceColor, dx, dy);
       }
       ctx.restore();
+    }
+
+    // 5.5. Text Multi-Stack Layers
+    if (stackEnabled && (stackCount ?? 0) >= 1) {
+      const cnt = stackCount ?? 3;
+      const offX = stackOffsetX ?? 10;
+      const offY = stackOffsetY ?? -10;
+      const decay = (stackOpacityDecay ?? 20) / 100;
+      const stackColors = [stackColor1 || "#FF7C00", stackColor2 || "#00FFDD", stackColor3 || "#FF00AA", stackColor4 || "#AA00FF"];
+
+      for (let s = cnt; s >= 1; s--) {
+        ctx.save();
+        const dx = s * offX;
+        const dy = s * offY;
+
+        const layerOpacity = Math.max(0.01, 1 - s * decay);
+        ctx.globalAlpha = layerOpacity;
+
+        const layerColor = stackColors[(s - 1) % stackColors.length] || "#FFFFFF";
+
+        if (strokeEnabled && strokeWidth > 0 && strokePosition !== "inside") {
+          ctx.save();
+          ctx.strokeStyle = layerColor;
+          ctx.lineWidth = strokePosition === "outside" ? strokeWidth * 2 : strokeWidth;
+          ctx.globalAlpha = (strokeOpacity / 100) * layerOpacity;
+          renderLines("stroke", layerColor, dx, dy);
+          ctx.restore();
+        }
+
+        renderLines("fill", layerColor, dx, dy);
+        ctx.restore();
+      }
     }
 
     // 6. Stroke Center or Outside
@@ -452,32 +517,36 @@ export class EditorialVellumEngine {
   }
 }
 
-export const EditorialVellumDefinition = {
-  id: "editorial-vellum",
-  name: "Editorial Vellum",
+export const ToxBrimDefinition = {
+  id: "tox-brim",
+  name: "ToxBrim",
   category: "classic",
-  description: "A custom Canvas 2D text effect named Editorial Vellum with linear fill.",
-  tags: ["studio-export", "custom-canvas", "linear"],
+  description: "A custom Canvas 2D text effect named ToxBrim with solid fill.",
+  tags: ["studio-export", "custom-canvas", "solid"],
   font: {
-    family: "Playfair Display",
-    weight: 700,
+    family: "Oswald",
+    weight: 900,
     style: "normal",
-    letterSpacing: 1,
+    letterSpacing: 3,
     lineHeight: 1.2,
   },
   fills: [
     {
-      type: "linear",
+      type: "solid",
       color: "#FFFFFF",
       gradient: {
         angle: 90,
         stops: [
           {
-            color: "#FDFBF7",
+            color: "#FFFFFF",
             offset: 0,
           },
           {
-            color: "#EAE5D9",
+            color: "#E0E0E0",
+            offset: 50,
+          },
+          {
+            color: "#ffffff",
             offset: 100,
           },
         ],
@@ -486,25 +555,14 @@ export const EditorialVellumDefinition = {
   ],
   strokes: [
     {
-      color: "#1E1E26",
+      color: "#7a7a7a",
       width: 2,
       position: "outside",
       opacity: 100,
       lineJoin: "round",
     },
   ],
-  shadows: [
-    {
-      type: "drop",
-      color: "#3D2B1F",
-      blur: 14,
-      offset: {
-        x: 6,
-        y: 6,
-      },
-      opacity: 90,
-    },
-  ],
+  shadows: [],
   glows: [],
   panel: null,
 } as any;
