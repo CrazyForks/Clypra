@@ -97,6 +97,9 @@ export function evaluateScene(time: number, clips: Clip[], tracks: Track[], asse
         role: clip.role,
         zIndex: i,
         layerType: "text",
+        time,
+        clipStartTime: clip.startTime,
+        clipDuration: clip.duration,
 
         // Transform
         x: clip.x,
@@ -104,6 +107,7 @@ export function evaluateScene(time: number, clips: Clip[], tracks: Track[], asse
         width: clip.width,
         height: clip.height,
         rotation: clip.rotation,
+
         opacity: clip.opacity * (transitionState.opacity ?? 1.0),
 
         // Transition

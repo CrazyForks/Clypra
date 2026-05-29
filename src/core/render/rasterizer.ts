@@ -380,7 +380,7 @@ function rasterizeTextLayer(ctx: CanvasRenderingContext2D | OffscreenCanvasRende
         offCtx.clearRect(0, 0, offW, offH);
 
         // Engine renders centered in its own (0, 0, offW, offH) space
-        renderTextEffectToContext(offCtx, layer.text, overriddenEffect, fontSize, 0, 0, offW, offH);
+        renderTextEffectToContext(offCtx, layer.text, overriddenEffect, fontSize, 0, 0, offW, offH, layer.time, layer.clipStartTime, layer.clipDuration);
 
         // Composite onto main canvas — context is at layer center
         // Account for the extra padding when drawing

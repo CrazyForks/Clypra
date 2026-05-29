@@ -6,6 +6,8 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { useTimelineStore, getInsertIndexForNewTrack } from "@/store/timelineStore";
 import { useProjectStore } from "@/store/projectStore";
 import { useUIStore } from "@/store/uiStore";
+import { useHistoryStore } from "@/store/historyStore";
+import { DeleteClipCommand } from "@/core/history/commands/DeleteClipCommand";
 import { usePlayback } from "@/hooks/usePlayback";
 import type { Clip, VideoMetadata } from "@/types";
 import { createClipFromAsset, getTimelineViewportEnd } from "@/lib/timelineClip";
@@ -347,9 +349,7 @@ export const Timeline: React.FC = () => {
 
     const targetTrack = liveTracks.find((t) => t.id === targetTrackId);
     const isTextClip = "text" in clip;
-    const isTrackTypeMismatch = targetTrack
-      ? (isTextClip ? targetTrack.type !== "text" : targetTrack.type === "text")
-      : false;
+    const isTrackTypeMismatch = targetTrack ? (isTextClip ? targetTrack.type !== "text" : targetTrack.type === "text") : false;
     const isInvalidPosition = targetTrack?.locked || isTrackTypeMismatch || false;
     if (isInvalidPosition) {
       const next = {
@@ -463,26 +463,23 @@ export const Timeline: React.FC = () => {
       newTrackPosition: null,
     };
     const visualChanged = Math.abs((next.offsetX ?? 0) - (ds.offsetX ?? 0)) > DRAG_RENDER_EPSILON_PX || Math.abs((next.offsetY ?? 0) - (ds.offsetY ?? 0)) > DRAG_RENDER_EPSILON_PX;
-    const targetChanged =
-      ds.targetTrackId !== next.targetTrackId ||
-      ds.targetStartTime !== next.targetStartTime ||
-      ds.insertionIndex !== next.insertionIndex ||
-      ds.isInvalidPosition !== next.isInvalidPosition ||
-      ds.willCreateNewTrack !== next.willCreateNewTrack ||
-      ds.newTrackPosition !== next.newTrackPosition;
+    const targetChanged = ds.targetTrackId !== next.targetTrackId || ds.targetStartTime !== next.targetStartTime || ds.insertionIndex !== next.insertionIndex || ds.isInvalidPosition !== next.isInvalidPosition || ds.willCreateNewTrack !== next.willCreateNewTrack || ds.newTrackPosition !== next.newTrackPosition;
     dragStateRef.current = next;
     if (visualChanged || targetChanged) {
       setDragState(next);
     }
   }, []);
 
-  const handleClipDragMove = useCallback((clipId: string, _deltaX: number, _deltaY: number, clientX: number, clientY: number) => {
-    const ds = dragStateRef.current;
-    if (!ds || ds.draggingClipId !== clipId) return;
-    dragMovePointerRef.current = { clipId, clientX, clientY };
-    if (dragMoveRafRef.current !== null) return;
-    dragMoveRafRef.current = requestAnimationFrame(flushQueuedClipDragMove);
-  }, [flushQueuedClipDragMove]);
+  const handleClipDragMove = useCallback(
+    (clipId: string, _deltaX: number, _deltaY: number, clientX: number, clientY: number) => {
+      const ds = dragStateRef.current;
+      if (!ds || ds.draggingClipId !== clipId) return;
+      dragMovePointerRef.current = { clipId, clientX, clientY };
+      if (dragMoveRafRef.current !== null) return;
+      dragMoveRafRef.current = requestAnimationFrame(flushQueuedClipDragMove);
+    },
+    [flushQueuedClipDragMove],
+  );
 
   const clearQueuedDragMove = useCallback(() => {
     if (dragMoveRafRef.current !== null) {
@@ -544,7 +541,7 @@ export const Timeline: React.FC = () => {
       if (dragSnapshot.willCreateNewTrack && dragSnapshot.newTrackPosition) {
         const isTextClip = "text" in clip;
         const mediaAsset = useProjectStore.getState().mediaAssets.find((a) => a.id === clip.mediaId);
-        const trackType = isTextClip ? "text" : (mediaAsset?.type === "audio" ? "audio" : "video");
+        const trackType = isTextClip ? "text" : mediaAsset?.type === "audio" ? "audio" : "video";
 
         const store = useTimelineStore.getState();
         const insertIndex = getInsertIndexForNewTrack(store.tracks, trackType);
@@ -680,21 +677,27 @@ export const Timeline: React.FC = () => {
       // Timeline validation will inform about gaps, but never blocks deletion
       // The compositor handles rendering gracefully even with empty tracks
 
-      // Remove each selected clip (batched — single epoch increment)
+      // Remove each selected clip using command system for undo/redo support
       const store = useTimelineStore.getState();
-      const { removeClip, normalizeTrack, removeEmptyNonMainTracks, withBatch } = store;
+      const { normalizeTrack, removeEmptyNonMainTracks, withBatch } = store;
+      const { execute, beginTransaction, commitTransaction } = useHistoryStore.getState();
       const affectedTracks = new Set<string>();
 
-      withBatch(() => {
-        selectedClipIds.forEach((clipId) => {
-          const clip = store.clips.find((c) => c.id === clipId);
-          if (clip) {
-            affectedTracks.add(clip.trackId);
-            removeClip(clipId);
-          }
-        });
+      // Use transaction to group all deletes into a single undo/redo unit
+      beginTransaction("Delete Clips");
 
-        // Normalize affected tracks to close gaps
+      selectedClipIds.forEach((clipId) => {
+        const clip = store.clips.find((c) => c.id === clipId);
+        if (clip) {
+          affectedTracks.add(clip.trackId);
+          execute(new DeleteClipCommand(clipId));
+        }
+      });
+
+      commitTransaction();
+
+      // Normalize affected tracks to close gaps (not part of undo/redo)
+      withBatch(() => {
         affectedTracks.forEach((trackId) => normalizeTrack(trackId));
         removeEmptyNonMainTracks(Array.from(affectedTracks));
       });
@@ -1100,14 +1103,7 @@ export const Timeline: React.FC = () => {
       <div className="flex-1 flex overflow-hidden">
         {clips.length > 0 && <TrackList />}
 
-        <div
-          ref={containerRef}
-          onScroll={handleScroll}
-          onPointerDownCapture={handleTimelinePointerDownCapture}
-          onClick={seekFromPointer}
-          id="timeline-tracks-container"
-          className={`flex-1 overflow-x-auto overflow-y-auto scrollbar-thin px-1 relative transition-colors border-l border-[#2b3442] ${isDraggingOver ? "bg-cyan-500/10 ring-2 ring-cyan-500/50 ring-inset" : ""}`}
-        >
+        <div ref={containerRef} onScroll={handleScroll} onPointerDownCapture={handleTimelinePointerDownCapture} onClick={seekFromPointer} id="timeline-tracks-container" className={`flex-1 overflow-x-auto overflow-y-auto scrollbar-thin px-1 relative transition-colors border-l border-[#2b3442] ${isDraggingOver ? "bg-cyan-500/10 ring-2 ring-cyan-500/50 ring-inset" : ""}`}>
           {/* Minimal empty state hint - brutally subtle, preserves workspace identity */}
           {clips.length === 0 && <div className="absolute top-1/2 left-3 text-xl text-white pointer-events-none font-mono">Drop media here • I to import</div>}
 

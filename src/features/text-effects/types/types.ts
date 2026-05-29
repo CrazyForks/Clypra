@@ -24,4 +24,11 @@ export interface TextEffectDefinition {
   glows?: any[];
   bevel?: any;
   panel?: any;
+  animation?: {
+    type: "none" | "typewriter" | "wave" | "fade" | "glitch";
+    speed?: number;
+    amplitude?: number;
+    frequency?: number;
+  };
 }
+

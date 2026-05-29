@@ -20,7 +20,7 @@
  */
 
 import type { TextEffectDefinition } from "./types/types";
-import { resolveFontFamilyName } from "./lib/helpers";
+import { resolveFontFamilyName, wrapText } from "./lib/helpers";
 
 
 // ─── Internal registry state ──────────────────────────────────────────────────
@@ -62,10 +62,36 @@ export function hasRegisteredEngine(id: string): boolean {
  * Renders a registered effect to any 2D canvas context.
  * Internally maps TextEffectDefinition → flat engine config and calls drawFrame.
  */
-export function renderRegisteredEffect(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, effect: TextEffectDefinition, text: string, fontSize: number, canvasWidth: number, canvasHeight: number): void {
+export function renderRegisteredEffect(
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  effect: TextEffectDefinition,
+  text: string,
+  fontSize: number,
+  canvasWidth: number,
+  canvasHeight: number,
+  time?: number,
+  clipStartTime?: number,
+  clipDuration?: number
+): void {
   const Engine = _engines.get(effect.id);
   if (!Engine) return;
-  const config = _buildConfig(effect, text, fontSize, canvasWidth, canvasHeight);
+
+  // Dynamic Bounding Box Word-Wrapping: Wrap sentences to fit canvasWidth * 0.8 boundary!
+  ctx.save();
+  ctx.font = `${effect.font.style} ${effect.font.weight} ${fontSize}px "${resolveFontFamilyName(effect.font.family)}"`;
+  if (typeof (ctx as any).letterSpacing !== "undefined") {
+    (ctx as any).letterSpacing = `${effect.font.letterSpacing}px`;
+  }
+  const maxWidth = canvasWidth * 0.8;
+  const rawLines = text.split("\n");
+  const wrappedLines: string[] = [];
+  rawLines.forEach((rl) => {
+    wrappedLines.push(...wrapText(ctx, rl, maxWidth));
+  });
+  ctx.restore();
+  const wrappedText = wrappedLines.join("\n");
+
+  const config = _buildConfig(effect, wrappedText, fontSize, canvasWidth, canvasHeight, time, clipStartTime, clipDuration);
   new Engine(config).drawFrame(ctx);
 }
 
@@ -73,7 +99,16 @@ export function renderRegisteredEffect(ctx: CanvasRenderingContext2D | Offscreen
 // All studio-generated engines share the same flat config shape (SolarisInkConfig-style).
 // This function maps the structured definition once, so individual engine classes
 // never need a fromDefinition method.
-export function _buildConfig(effect: TextEffectDefinition, text: string, fontSize: number, canvasWidth: number, canvasHeight: number): EffectConfig {
+export function _buildConfig(
+  effect: TextEffectDefinition,
+  text: string,
+  fontSize: number,
+  canvasWidth: number,
+  canvasHeight: number,
+  time?: number,
+  clipStartTime?: number,
+  clipDuration?: number
+): EffectConfig {
   const fill = effect.fills?.[0];
   const stroke = effect.strokes?.[0];
   const shadow = effect.shadows?.[0];
@@ -89,6 +124,9 @@ export function _buildConfig(effect: TextEffectDefinition, text: string, fontSiz
     width: canvasWidth,
     height: canvasHeight,
     text,
+    time: time ?? 0,
+    clipStartTime: clipStartTime ?? 0,
+    clipDuration: clipDuration ?? 5.0,
 
     // Font — resolve to exact Fontsource name (bare, no quotes — engines quote it themselves)
     fontFamily: resolveFontFamilyName(effect.font.family),
@@ -98,6 +136,10 @@ export function _buildConfig(effect: TextEffectDefinition, text: string, fontSiz
     letterSpacing: effect.font.letterSpacing,
     lineHeight: effect.font.lineHeight,
   };
+
+  if (effect.animation) {
+    config.animation = effect.animation;
+  }
 
   // Fill — default to "none" when no fills are defined (not "solid")
   if (fill) {
@@ -235,18 +277,22 @@ export function _buildConfig(effect: TextEffectDefinition, text: string, fontSiz
 
 // SolarisInk
 import { SolarisInkEngine, SolarisInkDefinition } from "./effects/SolarisInk";
+(SolarisInkDefinition as any).animation = { type: "typewriter", speed: 1.0 };
 register(SolarisInkDefinition, SolarisInkEngine);
 
 // BiolumeTrench
 import { BiolumeTrenchEngine, BiolumeTrenchDefinition } from "./effects/BiolumeTrench";
+(BiolumeTrenchDefinition as any).animation = { type: "fade" };
 register(BiolumeTrenchDefinition, BiolumeTrenchEngine);
 
 // BitDecay
 import { BitDecayEngine, BitDecayDefinition } from "./effects/BitDecay";
+(BitDecayDefinition as any).animation = { type: "glitch" };
 register(BitDecayDefinition, BitDecayEngine);
 
 // NeonCrimson
 import { NeonCrimsonEngine, NeonCrimsonDefinition } from "./effects/NeonCrimson";
+(NeonCrimsonDefinition as any).animation = { type: "wave", speed: 1.0, amplitude: 14, frequency: 4.8 };
 register(NeonCrimsonDefinition, NeonCrimsonEngine);
 
 // VoltSector

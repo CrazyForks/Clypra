@@ -176,3 +176,36 @@ export const resolveFontFamilyName = (fontFamily: string): string => {
   return fontFamily;
 };
 
+/**
+ * Wraps a block of text into multiple lines based on maximum pixel width bounds.
+ * Preserves deliberate formatting of short words and splits long sentences elegantly.
+ */
+export const wrapText = (
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  text: string,
+  maxWidth: number
+): string[] => {
+  const words = text.split(" ");
+  const lines: string[] = [];
+  let currentLine = "";
+
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    const testLine = currentLine ? `${currentLine} ${word}` : word;
+    const metrics = ctx.measureText(testLine);
+
+    if (metrics.width > maxWidth && currentLine) {
+      lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = testLine;
+    }
+  }
+
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+
+  return lines.length > 0 ? lines : [text];
+};
+
