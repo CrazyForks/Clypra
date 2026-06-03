@@ -377,12 +377,24 @@ function rasterizeTextLayer(ctx: CanvasRenderingContext2D | OffscreenCanvasRende
   if (layer.styleId) {
     const effectDef = useEffectsStore.getState().definitions[layer.styleId];
     if (effectDef) {
+      // fontSize for rendering: scaled to match the layer's on-canvas pixel size.
       const fontSize = layer.fontSize * scaleY;
+
+      // fontSize for _buildConfig ratio: use the AUTHORED fontSize (layer.fontSize,
+      // unscaled). _buildConfig computes ratio = fontSize / 100 to proportionally
+      // scale blur, spread, stroke widths, etc. relative to the studio's 100px
+      // reference. If we pass the render-resolution fontSize (which can be 2-4×
+      // larger on high-res canvases), all blur and spread values get multiplied by
+      // that same factor — producing the blown-out glow visible in the editor vs
+      // studio. The canvas dimensions (offW/offH) already encode the correct render
+      // size; the engine centers text within them independently of this ratio.
+      const authoredFontSize = layer.fontSize;
+
       const effectPadding = fontSize * 0.5;
       const offW = Math.max(1, Math.ceil(width + effectPadding * 2));
       const offH = Math.max(1, Math.ceil(height + effectPadding * 2));
 
-      const builtCfg = _buildConfig(effectDef, layer.text, fontSize, offW, offH, layer.time, layer.clipStartTime, layer.clipDuration);
+      const builtCfg = _buildConfig(effectDef, layer.text, authoredFontSize, offW, offH, layer.time, layer.clipStartTime, layer.clipDuration);
       const engineConfig: TextEffectConfig = {
         ...engineDefaultConfig,
         ...builtCfg,
@@ -390,6 +402,10 @@ function rasterizeTextLayer(ctx: CanvasRenderingContext2D | OffscreenCanvasRende
         // @clypra/engine uses canvasWidth/canvasHeight for centering.
         canvasWidth: offW,
         canvasHeight: offH,
+        // Override fontSize with the render-resolution value so text fills
+        // the on-canvas layer bounds correctly. Effect parameters (blur,
+        // spread, strokes) remain at authored scale from builtCfg above.
+        fontSize,
         fontFamily: layer.fontFamily || effectDef.font?.family,
       } as TextEffectConfig;
 
