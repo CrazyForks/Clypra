@@ -199,5 +199,33 @@ describe("RasterSurface", () => {
       expect(rect).toHaveBeenNthCalledWith(3, 120, 0, 60, 40);
       surface.dispose();
     });
+
+    it("interpolates target timestamps using trim boundaries if provided", () => {
+      const { canvas, drawImage } = makeCanvas();
+      const surface = new RasterSurface(canvas);
+
+      const art5 = makeArtifact(5000);
+      const art10 = makeArtifact(10000);
+      const art15 = makeArtifact(15000);
+      const art20 = makeArtifact(20000);
+      const art25 = makeArtifact(25000);
+      const artifacts = [art5, art10, art15, art20, art25];
+
+      surface.drawFilmstrip(
+        artifacts,
+        layout({
+          clipWidthPx: 180,
+          tileWidthPx: 60,
+          trimIn: 10,
+          trimOut: 20,
+        })
+      );
+
+      expect(drawImage).toHaveBeenCalledTimes(3);
+      expect(drawImage.mock.calls[0][0]).toBe(art10.bitmap);
+      expect(drawImage.mock.calls[1][0]).toBe(art15.bitmap);
+      expect(drawImage.mock.calls[2][0]).toBe(art15.bitmap);
+      surface.dispose();
+    });
   });
 });

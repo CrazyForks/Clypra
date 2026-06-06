@@ -148,7 +148,25 @@ export class FilmstripCache {
 
   constructor(memoryBudgetMB: number = 100) {
     this.memoryBudgetBytes = memoryBudgetMB * 1024 * 1024;
-    this.tileCache = new FilmstripTileCache(memoryBudgetMB);
+    this.tileCache = new FilmstripTileCache(memoryBudgetMB, (art) => this.isArtifactActive(art));
+  }
+
+  /**
+   * Returns true if the given artifact is currently referenced in active clip entries
+   * or pending updates.
+   */
+  isArtifactActive(artifact: TransportArtifact): boolean {
+    for (const entry of this.entries.values()) {
+      if (entry.artifacts.includes(artifact)) {
+        return true;
+      }
+    }
+    for (const pending of this.pendingArtifacts) {
+      if (pending.artifact === artifact) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -190,30 +208,47 @@ export class FilmstripCache {
     for (const [clipId, artifacts] of updatesByClip) {
       const entry = this.entries.get(clipId);
       if (!entry) {
-        // Entry was invalidated during RAF delay - close bitmaps
+        // Entry was invalidated during RAF delay - close bitmaps if not cached
         for (const artifact of artifacts) {
-          artifact.bitmap.close();
+          if (!this.tileCache.isArtifactCached(artifact)) {
+            try {
+              artifact.bitmap.close();
+            } catch (e) {}
+          }
         }
         continue;
       }
 
       // Merge artifacts (dedupe by timestamp, keep highest tier)
       for (const artifact of artifacts) {
+        // DEFENSIVE: Skip if already closed/invalid
+        if (!artifact.bitmap || artifact.bitmap.width === 0 || artifact.bitmap.height === 0) {
+          continue;
+        }
+
         const existingIdx = entry.artifacts.findIndex((a) => a.timestampMs === artifact.timestampMs);
 
         if (existingIdx >= 0) {
           const existing = entry.artifacts[existingIdx];
           if (artifact.spatialTier > existing.spatialTier) {
             // Higher tier - replace
-            existing.bitmap.close();
+            if (!this.tileCache.isArtifactCached(existing)) {
+              try {
+                existing.bitmap.close();
+              } catch (e) {}
+            }
             entry.memoryBytes -= existing.width * existing.height * 4;
             this.currentMemoryBytes -= existing.width * existing.height * 4;
             entry.artifacts[existingIdx] = artifact;
             entry.memoryBytes += artifact.width * artifact.height * 4;
             this.currentMemoryBytes += artifact.width * artifact.height * 4;
           } else {
-            // Lower or same tier - discard new artifact
-            artifact.bitmap.close();
+            // Lower or same tier - discard new artifact if not cached
+            if (!this.tileCache.isArtifactCached(artifact)) {
+              try {
+                artifact.bitmap.close();
+              } catch (e) {}
+            }
             continue;
           }
         } else {
@@ -241,7 +276,7 @@ export class FilmstripCache {
    * Build artifact array from tile cache for given addresses.
    * Uses aggressive cheating: missing tiles filled by nearest cached tile.
    */
-  private _buildArtifactsFromTiles(addresses: FilmstripTileAddress[], clipId: string, spatialTier: SpatialTier): TransportArtifact[] {
+  private _buildArtifactsFromTiles(addresses: FilmstripTileAddress[], clipId: string, spatialTier: SpatialTier, videoPath?: string): TransportArtifact[] {
     const artifacts: TransportArtifact[] = [];
     const usedKeys = new Set<string>();
 
@@ -259,6 +294,7 @@ export class FilmstripCache {
         spatialTier,
         addr.timestamp,
         0.5, // 500ms tolerance — "good enough" for scroll
+        videoPath,
       );
       if (nearest) {
         artifacts.push(nearest.artifact);
@@ -277,20 +313,12 @@ export class FilmstripCache {
   requestFilmstrip(options: { clipId: string; videoPath: string; trimIn: number; trimOut: number; duration: number; clipStartTime: number; clipWidthPx: number; spatialTier: SpatialTier; epochId: RenderEpochId; viewportScrollLeft: number; viewportWidth: number; pixelsPerSecond: number; onUpdate: (artifacts: readonly TransportArtifact[]) => void }): void {
     const { clipId, epochId, onUpdate, videoPath, spatialTier } = options;
 
-    // Cancel existing request if epoch changed
-    const existing = this.entries.get(clipId);
-    if (existing && existing.epochId !== epochId) {
-      existing.cancelFn?.();
-      this._disposeArtifacts(existing.artifacts);
-      this.currentMemoryBytes -= existing.memoryBytes;
-      this.entries.delete(clipId);
-      // Also invalidate tiles for this clip when epoch changes
-      this.tileCache.invalidateClip(clipId);
-    }
+    console.log(`[FilmstripCache DEBUG] requestFilmstrip clipId=${clipId} epochId=${epochId} videoPath=${videoPath} spatialTier=${spatialTier}`);
 
     // Generate tile addresses using FIXED grid (not dynamic timestamps)
     const tileAddresses = generateViewportTileAddresses({
       clipId,
+      videoPath,
       zoomTier: spatialTier,
       trimIn: options.trimIn,
       trimOut: options.trimOut,
@@ -302,43 +330,127 @@ export class FilmstripCache {
       overscanFactor: 2.0,
     });
 
-    if (tileAddresses.length === 0) {
-      // Clip not in viewport
-      if (existing) {
+    console.log(`[FilmstripCache DEBUG] generated ${tileAddresses.length} tile addresses for clipId=${clipId}`, tileAddresses.map(a => ({ idx: a.tileIndex, ts: a.timestamp })));
+
+    let keptArtifacts: TransportArtifact[] = [];
+    const existing = this.entries.get(clipId);
+    if (existing) {
+      console.log(`[FilmstripCache DEBUG] existing entry found for clipId=${clipId} epochId=${existing.epochId} currentEpochId=${epochId}`);
+
+      if (existing.epochId !== epochId) {
+        // Epoch changed: cancel the old request, clean up clip-level entry, but keep matching artifacts and do NOT invalidate global tile cache!
         existing.cancelFn?.();
-        this._disposeArtifacts(existing.artifacts);
-        this.currentMemoryBytes -= existing.memoryBytes;
+        const disposedArtifacts: TransportArtifact[] = [];
+        for (const art of existing.artifacts) {
+          const isMatched = tileAddresses.some(
+            (addr) => Math.abs(addr.timestamp * 1000 - art.timestampMs) < 1
+          );
+          if (isMatched) {
+            keptArtifacts.push(art);
+          } else {
+            disposedArtifacts.push(art);
+          }
+        }
+        console.log(`[FilmstripCache DEBUG] epoch changed: keeping ${keptArtifacts.length} artifacts, disposing ${disposedArtifacts.length}`);
+        this._disposeArtifacts(disposedArtifacts);
+        const disposedMemory = disposedArtifacts.reduce((acc, art) => acc + art.width * art.height * 4, 0);
+        this.currentMemoryBytes -= disposedMemory;
+        this.entries.delete(clipId);
+      } else {
+        const sameAddresses =
+          existing.tileAddresses.length === tileAddresses.length &&
+          existing.tileAddresses.every(
+            (addr, i) =>
+              addr.zoomTier === tileAddresses[i].zoomTier &&
+              addr.tileIndex === tileAddresses[i].tileIndex &&
+              Math.abs(addr.timestamp - tileAddresses[i].timestamp) < 0.001
+          );
+
+        console.log(`[FilmstripCache DEBUG] same epoch. sameAddresses=${sameAddresses} sameSpatialTier=${existing.spatialTier === spatialTier}`);
+
+        if (sameAddresses && existing.spatialTier === spatialTier) {
+          existing.lastViewportUpdate = Date.now();
+          onUpdate([...existing.artifacts]);
+          return;
+        }
+
+        // Skip if same epoch, same tile addresses, and recent viewport update (debounce)
+        const timeSinceUpdate = Date.now() - existing.lastViewportUpdate;
+        if (timeSinceUpdate < 100 && sameAddresses) {
+          // Debounce: return cached artifacts from tiles
+          const cachedArtifacts = this._buildArtifactsFromTiles(tileAddresses, clipId, spatialTier, videoPath);
+          console.log(`[FilmstripCache DEBUG] debouncing viewport update. Returning ${cachedArtifacts.length} cached artifacts`);
+          onUpdate(cachedArtifacts);
+          return;
+        }
+
+        // Epoch and spatialTier are same, but layout/addresses changed: cancel the old request now
+        existing.cancelFn?.();
+
+        // Separate artifacts to prevent memory leak and reuse valid ones
+        const disposedArtifacts: TransportArtifact[] = [];
+        for (const art of existing.artifacts) {
+          const isMatched = tileAddresses.some(
+            (addr) => Math.abs(addr.timestamp * 1000 - art.timestampMs) < 1
+          );
+          if (isMatched) {
+            keptArtifacts.push(art);
+          } else {
+            disposedArtifacts.push(art);
+          }
+        }
+
+        console.log(`[FilmstripCache DEBUG] keeping ${keptArtifacts.length} matching artifacts, disposing ${disposedArtifacts.length}`);
+
+        // Dispose non-matching artifacts
+        this._disposeArtifacts(disposedArtifacts);
+        const disposedMemory = disposedArtifacts.reduce((acc, art) => acc + art.width * art.height * 4, 0);
+        this.currentMemoryBytes -= disposedMemory;
+      }
+    }
+
+    if (tileAddresses.length === 0) {
+      console.log(`[FilmstripCache DEBUG] clipId=${clipId} not in viewport`);
+      // Clip not in viewport
+      const currentExisting = this.entries.get(clipId);
+      if (currentExisting) {
+        currentExisting.cancelFn?.();
+        this._disposeArtifacts(currentExisting.artifacts);
+        this.currentMemoryBytes -= currentExisting.memoryBytes;
         this.entries.delete(clipId);
       }
       onUpdate([]);
       return;
     }
 
+    // Try to fill in any missing tiles from the global tileCache
+    for (const addr of tileAddresses) {
+      const alreadyKept = keptArtifacts.some((art) => Math.abs(addr.timestamp * 1000 - art.timestampMs) < 1);
+      if (!alreadyKept) {
+        const cached = this.tileCache.getTile(addr);
+        if (cached) {
+          keptArtifacts.push(cached.artifact);
+        }
+      }
+    }
+    console.log(`[FilmstripCache DEBUG] after checking global tileCache, keptArtifacts count=${keptArtifacts.length}`);
+
     // ── Aggressive Cheating: During fast/ballistic scroll, show stale tiles ──
     if (this.velocityState >= VelocityState.Fast) {
       // Build artifacts from cached tiles (with nearest-tile fallback)
-      const cachedArtifacts = this._buildArtifactsFromTiles(tileAddresses, clipId, spatialTier);
+      const cachedArtifacts = this._buildArtifactsFromTiles(tileAddresses, clipId, spatialTier, videoPath);
+      console.log(`[FilmstripCache DEBUG] velocityState >= Fast (${this.velocityState}). Returning ${cachedArtifacts.length} cached tiles`);
       onUpdate(cachedArtifacts);
 
       // If we have ALL tiles cached, skip the request entirely
       const allCached = tileAddresses.every((addr) => this.tileCache.hasTile(addr));
       if (allCached) {
+        console.log(`[FilmstripCache DEBUG] all tiles cached. Skipping backend request`);
         return;
       }
 
       // Otherwise: defer actual request — only request missing tiles
       // (fall through to normal request below, but with cached artifacts already shown)
-    }
-
-    // Skip if same epoch and recent viewport update (debounce)
-    if (existing && existing.epochId === epochId) {
-      const timeSinceUpdate = Date.now() - existing.lastViewportUpdate;
-      if (timeSinceUpdate < 100) {
-        // Debounce: return cached artifacts from tiles
-        const cachedArtifacts = this._buildArtifactsFromTiles(tileAddresses, clipId, spatialTier);
-        onUpdate(cachedArtifacts);
-        return;
-      }
     }
 
     // Extract timestamps from tile addresses for transport layer
@@ -348,16 +460,23 @@ export class FilmstripCache {
     const entry: FilmstripCacheEntry = {
       clipId,
       epochId,
-      artifacts: [],
+      artifacts: keptArtifacts,
       cancelFn: null,
       lastViewportUpdate: Date.now(),
-      memoryBytes: 0,
+      memoryBytes: keptArtifacts.reduce((acc, art) => acc + art.width * art.height * 4, 0),
       onUpdate,
       tileAddresses,
       spatialTier,
     };
 
     this.entries.set(clipId, entry);
+
+    if (keptArtifacts.length > 0) {
+      console.log(`[FilmstripCache DEBUG] triggering onUpdate immediately with ${keptArtifacts.length} kept/cached artifacts`);
+      onUpdate([...keptArtifacts]);
+    }
+
+    console.log(`[FilmstripCache DEBUG] calling requestProgressiveTiers for clipId=${clipId} timestampsMs:`, timestampsMs);
 
     // Request artifacts (transport still uses timestamps)
     const cancelFn = requestProgressiveTiers({
@@ -370,7 +489,14 @@ export class FilmstripCache {
       onArtifact: (artifact) => {
         // Check if entry still valid (not invalidated during async decode)
         const currentEntry = this.entries.get(clipId);
-        if (!currentEntry || currentEntry.epochId !== epochId) {
+        console.log(`[FilmstripCache DEBUG] onArtifact received for clipId=${clipId} timestampMs=${artifact.timestampMs} spatialTier=${artifact.spatialTier}`);
+        if (!currentEntry) {
+          console.warn(`[FilmstripCache DEBUG] onArtifact discarded: no entry found for clipId=${clipId}`);
+          artifact.bitmap.close();
+          return;
+        }
+        if (currentEntry.epochId !== epochId) {
+          console.warn(`[FilmstripCache DEBUG] onArtifact discarded: epochId changed. current=${currentEntry.epochId} expected=${epochId}`);
           artifact.bitmap.close();
           return;
         }
@@ -379,7 +505,10 @@ export class FilmstripCache {
         const matchingAddr = currentEntry.tileAddresses.find((a) => Math.abs(a.timestamp * 1000 - artifact.timestampMs) < 1);
         if (matchingAddr) {
           // Store in tile cache for reuse across zoom transitions
+          console.log(`[FilmstripCache DEBUG] Caching matching artifact in tileCache for idx=${matchingAddr.tileIndex}`);
           this.tileCache.setTile(matchingAddr, artifact);
+        } else {
+          console.warn(`[FilmstripCache DEBUG] Received artifact at ${artifact.timestampMs}ms which does not match any requested tile address`);
         }
 
         // Enforce memory budget BEFORE scheduling
@@ -392,13 +521,14 @@ export class FilmstripCache {
         this.scheduleArtifactUpdate(clipId, artifact);
       },
       onComplete: () => {
+        console.log(`[FilmstripCache DEBUG] requestProgressiveTiers onComplete for clipId=${clipId}`);
         const currentEntry = this.entries.get(clipId);
         if (currentEntry && currentEntry.epochId === epochId) {
           currentEntry.cancelFn = null;
         }
       },
       onError: (err) => {
-        console.error(`[FilmstripCache] Request failed for ${clipId}:`, err);
+        console.error(`[FilmstripCache DEBUG] requestProgressiveTiers onError for clipId=${clipId}:`, err);
       },
     });
 
@@ -465,6 +595,9 @@ export class FilmstripCache {
 
   private _disposeArtifacts(artifacts: TransportArtifact[]): void {
     for (const artifact of artifacts) {
+      if (this.tileCache.isArtifactCached(artifact)) {
+        continue;
+      }
       try {
         artifact.bitmap.close();
       } catch (err) {

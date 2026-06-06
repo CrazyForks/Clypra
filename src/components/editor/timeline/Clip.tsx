@@ -34,7 +34,7 @@ interface ClipProps {
 
 const ClipInner: React.FC<ClipProps> = ({ clip, mediaAsset, pixelsPerSecond, selected, locked = false, onDragStart, onDragMove, onDragEnd, dragState }) => {
   const { selectClip, toggleClipSelection } = useUIStore();
-  const { clips, updateClip, rippleEditEnabled, rippleTrimClip } = useTimelineStore();
+  const { clips, updateClip, rippleEditEnabled, rippleTrimClip, scrollLeft, viewportWidth } = useTimelineStore();
   const [isResizing, setIsResizing] = useState<"left" | "right" | null>(null);
   const [isHovered, setIsHovered] = useState(false);
   const [resizeStart, setResizeStart] = useState<{ x: number; startTime: number; duration: number; trimIn: number; trimOut: number; isRipple: boolean } | null>(null);
@@ -501,7 +501,7 @@ const ClipInner: React.FC<ClipProps> = ({ clip, mediaAsset, pixelsPerSecond, sel
           </div>
           {mediaAsset && (mediaAsset.type === "video" || mediaAsset.type === "image") ? (
             <div className="flex min-h-0 w-full flex-1 items-center">
-              <ClipFilmstrip className="w-full shrink-0" clip={clip} mediaAsset={mediaAsset} clipWidthPx={width} pixelsPerSecond={pixelsPerSecond} stripHeightPx={40} viewportScrollLeft={0} viewportWidth={1920} />
+              <ClipFilmstrip className="w-full shrink-0" clip={clip} mediaAsset={mediaAsset} clipWidthPx={width} pixelsPerSecond={pixelsPerSecond} stripHeightPx={40} viewportScrollLeft={scrollLeft} viewportWidth={viewportWidth} />
             </div>
           ) : mediaAsset?.type === "audio" ? (
             <div className="flex min-h-0 w-full flex-1 items-center">

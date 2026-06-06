@@ -133,6 +133,9 @@ export class RenderEngine {
       clipVersion: options.clipVersion ?? 0,
       transformGraphVersion: options.transformGraphVersion ?? 0,
     });
+
+    // Register active epoch immediately to prevent race conditions during mount
+    registerActiveEpoch(clipId, renderState.epochId);
   }
 
   unregisterClip(clipId: string): void {
@@ -180,7 +183,7 @@ export class RenderEngine {
       epochId,
       interactionState: this._currentInteractionState,
       visibleArtifacts: [], // Populated in Phase 3 by transport layer
-      isFallback: false,
+      isFallback: true,
     };
   }
 
@@ -200,6 +203,7 @@ export class RenderEngine {
    */
   requestFilmstrip(options: { clipId: string; videoPath: string; trimIn: number; trimOut: number; duration: number; clipStartTime: number; clipWidthPx: number; viewportScrollLeft: number; viewportWidth: number; pixelsPerSecond: number }): void {
     const state = this._clipStates.get(options.clipId);
+    console.log(`[RenderEngine DEBUG] requestFilmstrip clipId=${options.clipId} stateFound=${!!state}`);
     if (!state) {
       // Clip not registered - register it first
       this.registerClip(options.clipId);
@@ -211,6 +215,7 @@ export class RenderEngine {
       spatialTier: state.renderState.currentTier.spatialTier,
       epochId: state.renderState.epochId,
       onUpdate: (artifacts) => {
+        console.log(`[RenderEngine DEBUG] requestFilmstrip onUpdate clipId=${options.clipId} artifactsCount=${artifacts.length}`);
         // Update RenderState.visibleArtifacts
         state.renderState = {
           ...state.renderState,
@@ -330,6 +335,7 @@ export class RenderEngine {
         width: el.clientWidth,
         height: el.clientHeight,
       };
+      this._currentViewportBounds = bounds;
       this._ism.onScroll(el.scrollLeft, bounds, lastVelocityPx);
       lastScrollX = el.scrollLeft;
     };

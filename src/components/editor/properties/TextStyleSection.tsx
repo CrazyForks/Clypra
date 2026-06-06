@@ -30,6 +30,11 @@ export const TextStyleSection: React.FC<TextStyleSectionProps> = ({ textClip, pr
       fontStyle: effect.font.style,
       stroke: effect.strokes?.[0] ? { color: effect.strokes[0].color, width: effect.strokes[0].width } : undefined,
       shadow: effect.shadows?.[0] ? { color: effect.shadows[0].color, blur: effect.shadows[0].blur, offsetX: effect.shadows[0].offsetX ?? 0, offsetY: effect.shadows[0].offsetY ?? 0 } : undefined,
+      background: effect.panel ? {
+        color: effect.panel.color || "rgba(0,0,0,0.6)",
+        padding: effect.panel.paddingX !== undefined ? effect.panel.paddingX : 12,
+        borderRadius: effect.panel.radius !== undefined ? effect.panel.radius : 6
+      } : undefined,
     });
   };
 
@@ -246,25 +251,65 @@ export const TextStyleSection: React.FC<TextStyleSectionProps> = ({ textClip, pr
 
         <div className="space-y-3.5 p-3.5 bg-surface-raised/20 border border-border/40 rounded-xl">
           {/* Solid Text Color */}
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-text-primary select-none">Text Color</span>
-            <div className="flex items-center gap-2">
-              {/* Linear Gradients Quick Selectors */}
-              <select
-                value={(textClip.color || "#ffffff").includes(",") ? textClip.color : "solid"}
-                onChange={(e) => {
-                  if (e.target.value !== "solid") {
-                    handleUpdate("color", e.target.value);
-                  }
-                }}
-                className="bg-surface-raised border border-border rounded text-[10px] py-1 px-1.5 text-text-muted outline-none"
-              >
-                <option value="solid">Solid Color</option>
-                <option value="#ffe066, #b38600">Gold Gradient</option>
-                <option value="#ff3e00, #ff0077, #aa00ff">Sunset Gradient</option>
-                <option value="#ff007f, #aa00ff, #00c8ff, #00ff66">Rainbow Gradient</option>
-              </select>
-              <input type="color" value={(textClip.color || "#ffffff").includes(",") ? "#ffffff" : textClip.color || "#ffffff"} onChange={(e) => handleUpdate("color", e.target.value)} className="w-7 h-7 bg-transparent border-0 cursor-pointer rounded overflow-hidden" />
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-text-primary select-none font-medium">Text Color</span>
+              <div className="flex items-center gap-2">
+                {/* Linear Gradients Quick Selectors */}
+                <select
+                  value={(textClip.color || "#ffffff").includes(",") ? textClip.color : "solid"}
+                  onChange={(e) => {
+                    if (e.target.value !== "solid") {
+                      handleUpdate("color", e.target.value);
+                    }
+                  }}
+                  className="bg-surface-raised border border-border rounded text-[10px] py-1 px-1.5 text-text-muted outline-none"
+                >
+                  <option value="solid">Solid Color</option>
+                  <option value="#ffe066, #b38600">Gold Gradient</option>
+                  <option value="#ff3e00, #ff0077, #aa00ff">Sunset Gradient</option>
+                  <option value="#ff007f, #aa00ff, #00c8ff, #00ff66">Rainbow Gradient</option>
+                </select>
+                <input type="color" value={(textClip.color || "#ffffff").includes(",") ? "#ffffff" : textClip.color || "#ffffff"} onChange={(e) => handleUpdate("color", e.target.value)} className="w-7 h-7 bg-transparent border-0 cursor-pointer rounded overflow-hidden" />
+              </div>
+            </div>
+
+            {/* Quick Color Palette circles */}
+            <div className="flex flex-wrap gap-1.5 pt-1 justify-start">
+              {[
+                { label: "White", value: "#ffffff" },
+                { label: "Black", value: "#1a1a1a" },
+                { label: "Yellow", value: "#ffcc00" },
+                { label: "Red", value: "#ff3b30" },
+                { label: "Pink", value: "#ff2d55" },
+                { label: "Purple", value: "#af52de" },
+                { label: "Blue", value: "#007aff" },
+                { label: "Teal", value: "#00f0ff" },
+                { label: "Green", value: "#34c759" },
+                { label: "Gold", value: "#ffe066, #b38600" },
+                { label: "Sunset", value: "#ff3e00, #ff0077, #aa00ff" },
+                { label: "Ocean", value: "#00c8ff, #00ff66" },
+                { label: "Rainbow", value: "#ff007f, #aa00ff, #00c8ff, #00ff66" }
+              ].map((p, idx) => {
+                const isGrad = p.value.includes(",");
+                const style: React.CSSProperties = isGrad 
+                  ? { background: `linear-gradient(135deg, ${p.value})` }
+                  : { backgroundColor: p.value };
+                
+                const isSelected = textClip.color === p.value;
+
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => handleUpdate("color", p.value)}
+                    className={`w-6 h-6 rounded-full border cursor-pointer hover:scale-110 active:scale-95 transition-all focus:outline-none ${
+                      isSelected ? "border-accent ring-2 ring-accent/30 scale-105" : "border-border/60 hover:border-text-primary"
+                    }`}
+                    style={style}
+                    title={p.label}
+                  />
+                );
+              })}
             </div>
           </div>
 
@@ -287,10 +332,23 @@ export const TextStyleSection: React.FC<TextStyleSectionProps> = ({ textClip, pr
             </div>
 
             {textClip.stroke && (
-              <div className="space-y-2 p-2 bg-surface-raised/40 rounded-lg">
+              <div className="space-y-2.5 p-2.5 bg-surface-raised/40 border border-border/40 rounded-lg">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-text-muted">Color</span>
-                  <input type="color" value={textClip.stroke.color} onChange={(e) => handleUpdate("stroke", { ...textClip.stroke, color: e.target.value })} className="w-6 h-6 bg-transparent border-0 cursor-pointer" />
+                  <div className="flex items-center gap-2">
+                    {/* Quick Stroke Colors */}
+                    <div className="flex gap-1">
+                      {["#000000", "#ffffff", "#ff3b30", "#ffcc00"].map((c, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => handleUpdate("stroke", { ...textClip.stroke, color: c })}
+                          className={`w-4 h-4 rounded-full border border-border/60 cursor-pointer ${textClip.stroke?.color === c ? "ring-2 ring-accent/40" : ""}`}
+                          style={{ backgroundColor: c }}
+                        />
+                      ))}
+                    </div>
+                    <input type="color" value={textClip.stroke.color} onChange={(e) => handleUpdate("stroke", { ...textClip.stroke, color: e.target.value })} className="w-5 h-5 bg-transparent border-0 cursor-pointer" />
+                  </div>
                 </div>
                 <div>
                   <div className="flex justify-between text-[9px] text-text-muted mb-1 select-none">
@@ -322,10 +380,23 @@ export const TextStyleSection: React.FC<TextStyleSectionProps> = ({ textClip, pr
             </div>
 
             {textClip.shadow && (
-              <div className="space-y-2 p-2 bg-surface-raised/40 rounded-lg">
+              <div className="space-y-2.5 p-2.5 bg-surface-raised/40 border border-border/40 rounded-lg">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-text-muted">Glow Color</span>
-                  <input type="color" value={textClip.shadow.color} onChange={(e) => handleUpdate("shadow", { ...textClip.shadow, color: e.target.value })} className="w-6 h-6 bg-transparent border-0 cursor-pointer" />
+                  <div className="flex items-center gap-2">
+                    {/* Quick Glow Colors */}
+                    <div className="flex gap-1">
+                      {["#ff0000", "#ff007f", "#00f0ff", "#ffe066"].map((c, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => handleUpdate("shadow", { ...textClip.shadow, color: c })}
+                          className={`w-4 h-4 rounded-full border border-border/60 cursor-pointer ${textClip.shadow?.color === c ? "ring-2 ring-accent/40" : ""}`}
+                          style={{ backgroundColor: c }}
+                        />
+                      ))}
+                    </div>
+                    <input type="color" value={textClip.shadow.color} onChange={(e) => handleUpdate("shadow", { ...textClip.shadow, color: e.target.value })} className="w-5 h-5 bg-transparent border-0 cursor-pointer" />
+                  </div>
                 </div>
 
                 <div>
@@ -369,10 +440,23 @@ export const TextStyleSection: React.FC<TextStyleSectionProps> = ({ textClip, pr
             </div>
 
             {textClip.background && (
-              <div className="space-y-2 p-2 bg-surface-raised/40 rounded-lg">
+              <div className="space-y-2.5 p-2.5 bg-surface-raised/40 border border-border/40 rounded-lg">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-text-muted">Box Color</span>
-                  <input type="color" value={textClip.background.color.startsWith("rgba") ? "#000000" : textClip.background.color} onChange={(e) => handleUpdate("background", { ...textClip.background, color: e.target.value })} className="w-6 h-6 bg-transparent border-0 cursor-pointer" />
+                  <div className="flex items-center gap-2">
+                    {/* Quick Background Presets */}
+                    <div className="flex gap-1">
+                      {["rgba(0,0,0,0.6)", "rgba(255,255,255,0.2)", "rgba(0,122,255,0.3)", "rgba(255,59,48,0.3)"].map((c, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => handleUpdate("background", { ...textClip.background, color: c })}
+                          className={`w-4 h-4 rounded-full border border-border/60 cursor-pointer ${textClip.background?.color === c ? "ring-2 ring-accent/40" : ""}`}
+                          style={{ backgroundColor: c }}
+                        />
+                      ))}
+                    </div>
+                    <input type="color" value={textClip.background.color.startsWith("rgba") ? "#000000" : textClip.background.color} onChange={(e) => handleUpdate("background", { ...textClip.background, color: e.target.value })} className="w-5 h-5 bg-transparent border-0 cursor-pointer" />
+                  </div>
                 </div>
 
                 <div>

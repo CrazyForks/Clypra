@@ -42,6 +42,26 @@ pub struct ExportProgress {
     pub fps: f64,
 }
 
+/// Audio clip configuration for mixing.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportAudioClip {
+    /// Absolute local file path
+    pub path: String,
+    
+    /// Start time in seconds (relative to the export video start)
+    pub start_time: f64,
+    
+    /// Duration in seconds to play
+    pub duration: f64,
+    
+    /// Trim in offset in seconds inside the source media file
+    pub trim_in: f64,
+    
+    /// Volume multiplier
+    pub volume: f32,
+}
+
 /// Export configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,6 +92,9 @@ pub struct ExportConfig {
     
     /// Pixel format (yuv420p, yuv444p)
     pub pixel_format: String,
+
+    /// Audio clips to mix
+    pub audio_clips: Option<Vec<ExportAudioClip>>,
 }
 
 /// Active export session.
@@ -99,6 +122,54 @@ struct ExportSession {
 static EXPORT_SESSIONS: once_cell::sync::Lazy<Arc<Mutex<HashMap<String, ExportSession>>>> =
     once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
+/// Build an augmented PATH string that includes common Homebrew/system binary
+/// locations. Tauri apps on macOS launch with a stripped environment, so
+/// `ffmpeg` and `ffprobe` (typically in /opt/homebrew/bin or /usr/local/bin)
+/// may not be found with the default PATH.
+fn augmented_path() -> String {
+    let current = std::env::var("PATH").unwrap_or_default();
+    let extra = "/usr/local/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin";
+    if current.is_empty() {
+        extra.to_string()
+    } else {
+        format!("{}:{}", current, extra)
+    }
+}
+
+fn has_audio_stream(path: &str) -> bool {
+    let path_env = augmented_path();
+
+    let output = std::process::Command::new("ffprobe")
+        .env("PATH", &path_env)
+        .args([
+            "-v", "error",
+            "-select_streams", "a",
+            "-show_entries", "stream=codec_type",
+            "-of", "csv=p=0",
+            path,
+        ])
+        .output();
+
+    match output {
+        Ok(out) => {
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let has_audio = stdout.contains("audio");
+                eprintln!("[has_audio_stream] {} → has_audio={}", path, has_audio);
+                has_audio
+            } else {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                eprintln!("[has_audio_stream] ffprobe non-zero exit for {}: {}", path, stderr.trim());
+                false
+            }
+        }
+        Err(e) => {
+            eprintln!("[has_audio_stream] Could not spawn ffprobe (PATH={}): {}", path_env, e);
+            false
+        }
+    }
+}
+
 /// Start a video export session.
 ///
 /// Returns a session ID that can be used to write frames and finalize.
@@ -112,8 +183,9 @@ pub async fn start_video_export(
     
     // Build FFmpeg command
     let mut cmd = Command::new("ffmpeg");
+    cmd.env("PATH", augmented_path());
     
-    // Input: raw RGBA frames from stdin
+    // Input 0: raw RGBA frames from stdin
     cmd.arg("-f")
         .arg("rawvideo")
         .arg("-pixel_format")
@@ -124,6 +196,65 @@ pub async fn start_video_export(
         .arg(config.frame_rate.to_string())
         .arg("-i")
         .arg("pipe:0");
+
+    // Filter out and collect audio clips that actually contain audio streams
+    let mut valid_audio_clips = Vec::new();
+    if let Some(clips) = &config.audio_clips {
+        for clip in clips {
+            if has_audio_stream(&clip.path) {
+                valid_audio_clips.push(clip.clone());
+            } else {
+                eprintln!(
+                    "[start_video_export] Skipping file (no audio stream found): {}",
+                    clip.path
+                );
+            }
+        }
+    }
+
+    // Add audio inputs (each gets index 1, 2, ..., N because index 0 is pipe:0)
+    for clip in &valid_audio_clips {
+        cmd.arg("-i").arg(&clip.path);
+    }
+
+    // Build filter complex for mixing if we have valid audio clips
+    if !valid_audio_clips.is_empty() {
+        let mut filter_complex = String::new();
+        
+        for (idx, clip) in valid_audio_clips.iter().enumerate() {
+            let input_idx = idx + 1; // input 0 is pipe:0 (video)
+            let delay_ms = (clip.start_time * 1000.0) as i64;
+            let end_time = clip.trim_in + clip.duration;
+            
+            // Trim the audio, reset PTS, apply delay and volume multiplier
+            filter_complex.push_str(&format!(
+                "[{}:a]atrim=start={:.3}:end={:.3},asetpts=PTS-STARTPTS,adelay={}:all=1,volume={:.3}[a{}];",
+                input_idx, clip.trim_in, end_time, delay_ms, clip.volume, input_idx
+            ));
+        }
+        
+        // Map all processed streams into amix
+        for idx in 0..valid_audio_clips.len() {
+            filter_complex.push_str(&format!("[a{}]", idx + 1));
+        }
+        filter_complex.push_str(&format!(
+            "amix=inputs={}:duration=longest[a]",
+            valid_audio_clips.len()
+        ));
+        
+        cmd.arg("-filter_complex").arg(filter_complex);
+        
+        // Map streams explicitly: input 0 video, mixed audio
+        cmd.arg("-map").arg("0:v");
+        cmd.arg("-map").arg("[a]");
+        
+        // Configure AAC audio codec
+        cmd.arg("-c:a").arg("aac");
+        cmd.arg("-b:a").arg("128k");
+    } else {
+        // Map only the video stream from input 0
+        cmd.arg("-map").arg("0:v");
+    }
     
     // Video codec settings
     match config.codec.as_str() {
@@ -333,6 +464,7 @@ pub async fn cancel_video_export(session_id: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn check_ffmpeg_available() -> Result<bool, String> {
     let output = Command::new("ffmpeg")
+        .env("PATH", augmented_path())
         .arg("-version")
         .output()
         .await;
@@ -347,6 +479,7 @@ pub async fn check_ffmpeg_available() -> Result<bool, String> {
 #[tauri::command]
 pub async fn get_ffmpeg_version() -> Result<String, String> {
     let output = Command::new("ffmpeg")
+        .env("PATH", augmented_path())
         .arg("-version")
         .output()
         .await

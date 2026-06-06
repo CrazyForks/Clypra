@@ -17,6 +17,53 @@ const MIN_CLIP_SIZE_RATIO_OF_SHORT_EDGE = 0.12; // 12% of sequence short edge
 const MAX_CLIP_SCALE_FROM_CANVAS = 8; // Professional guardrail against runaway scaling
 const ASPECT_RATIO_SNAP_EPSILON = 0.02; // 2% snap band for "perfect shape" feel
 
+function calculateTextHeight(
+  text: string,
+  fontFamily: string,
+  fontSize: number,
+  bold: boolean,
+  maxWidth: number,
+  lineHeight: number = 1.2
+): number {
+  try {
+    const canvas = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(1, 1) : document.createElement("canvas");
+    const ctx = canvas.getContext("2d") as any;
+    if (!ctx) return fontSize * lineHeight * 1.5;
+    ctx.font = `${bold ? "bold" : "normal"} ${fontSize}px ${fontFamily}`;
+
+    // Break text character-by-character (like CapCut) so that when
+    // the user drags the width handle, every character wraps exactly
+    // at the bounding box edge — no word overflows.
+    let lineCount = 0;
+    let currentLine = "";
+
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      // Hard line-break: count it and start a fresh line
+      if (char === "\n") {
+        lineCount++;
+        currentLine = "";
+        continue;
+      }
+      const testLine = currentLine + char;
+      const metrics = ctx.measureText(testLine);
+      if (metrics.width > maxWidth && currentLine.length > 0) {
+        lineCount++;
+        currentLine = char;
+      } else {
+        currentLine = testLine;
+      }
+    }
+    // Count the last partial line
+    if (currentLine.length > 0) {
+      lineCount++;
+    }
+    return Math.max(1, lineCount) * fontSize * lineHeight;
+  } catch (e) {
+    return fontSize * lineHeight * 1.5;
+  }
+}
+
 /**
  * Calculate new transform from handle drag operation.
  * Returns partial clip update with new position/dimensions.
@@ -91,7 +138,8 @@ function handleMove(clip: Clip, delta: { x: number; y: number }, constraints: Tr
  */
 function handleCornerDrag(clip: Clip, handle: "nw" | "ne" | "sw" | "se", delta: { x: number; y: number }, constraints: TransformConstraints): Partial<Clip> {
   const aspectRatio = clip.sourceAspectRatio ?? clip.width / clip.height;
-  const isLocked = constraints.aspectRatioLocked;
+  // Symmetrical uniform scaling is always enforced for corner handles in modern NLEs
+  const isLocked = true;
   // Professional NLE feel: corner resize scales around the clip center.
   // Corner drag direction still controls whether size grows or shrinks,
   // but geometry expands/contracts symmetrically on both sides.
@@ -143,7 +191,8 @@ function handleCornerDrag(clip: Clip, handle: "nw" | "ne" | "sw" | "se", delta: 
  */
 function handleEdgeDrag(clip: Clip, handle: "n" | "s" | "e" | "w", delta: { x: number; y: number }, constraints: TransformConstraints): Partial<Clip> {
   const aspectRatio = clip.sourceAspectRatio ?? clip.width / clip.height;
-  const isLocked = constraints.aspectRatioLocked;
+  // Side handles always adjust a single axis. Aspect ratio lock is not enforced on edges.
+  const isLocked = false;
 
   let newX = clip.x;
   let newY = clip.y;
@@ -154,29 +203,28 @@ function handleEdgeDrag(clip: Clip, handle: "n" | "s" | "e" | "w", delta: { x: n
     case "n":
       newHeight = clip.height - delta.y;
       newHeight = Math.max(constraints.minHeight, newHeight);
-      if (isLocked) {
-        newWidth = newHeight * aspectRatio;
-        // Center the width change horizontally
-        newX = clip.x + (clip.width - newWidth) / 2;
-      }
       newY = clip.y + (clip.height - newHeight);
       break;
 
     case "s":
       newHeight = clip.height + delta.y;
       newHeight = Math.max(constraints.minHeight, newHeight);
-      if (isLocked) {
-        newWidth = newHeight * aspectRatio;
-        newX = clip.x + (clip.width - newWidth) / 2;
-      }
       break;
 
     case "e":
       newWidth = clip.width + delta.x;
       newWidth = Math.max(constraints.minWidth, newWidth);
-      if (isLocked) {
-        newHeight = newWidth / aspectRatio;
-        // Center the height change vertically
+      if ("text" in clip) {
+        const textClip = clip as any;
+        const isBold = textClip.fontWeight === "bold" || textClip.bold === true;
+        newHeight = calculateTextHeight(
+          textClip.text || "",
+          textClip.fontFamily || "Inter, system-ui, sans-serif",
+          textClip.fontSize || 48,
+          isBold,
+          newWidth,
+          textClip.lineHeight || 1.2
+        );
         newY = clip.y + (clip.height - newHeight) / 2;
       }
       break;
@@ -184,8 +232,17 @@ function handleEdgeDrag(clip: Clip, handle: "n" | "s" | "e" | "w", delta: { x: n
     case "w":
       newWidth = clip.width - delta.x;
       newWidth = Math.max(constraints.minWidth, newWidth);
-      if (isLocked) {
-        newHeight = newWidth / aspectRatio;
+      if ("text" in clip) {
+        const textClip = clip as any;
+        const isBold = textClip.fontWeight === "bold" || textClip.bold === true;
+        newHeight = calculateTextHeight(
+          textClip.text || "",
+          textClip.fontFamily || "Inter, system-ui, sans-serif",
+          textClip.fontSize || 48,
+          isBold,
+          newWidth,
+          textClip.lineHeight || 1.2
+        );
         newY = clip.y + (clip.height - newHeight) / 2;
       }
       newX = clip.x + (clip.width - newWidth);
@@ -195,12 +252,6 @@ function handleEdgeDrag(clip: Clip, handle: "n" | "s" | "e" | "w", delta: { x: n
   const clamped = clampDimensions(newWidth, newHeight, clip, constraints, isLocked);
   newWidth = clamped.width;
   newHeight = clamped.height;
-
-  if (!isLocked) {
-    const snapped = snapToSourceAspectIfNear(clip, newWidth, newHeight, constraints);
-    newWidth = snapped.width;
-    newHeight = snapped.height;
-  }
 
   return {
     x: newX,

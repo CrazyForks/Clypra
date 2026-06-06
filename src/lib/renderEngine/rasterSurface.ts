@@ -30,6 +30,10 @@ export type FilmstripLayout = {
   dpr: number;
   /** Target tile width in CSS pixels (default 60) */
   tileWidthPx?: number;
+  /** Start time of clip trimming boundary in seconds */
+  trimIn?: number;
+  /** End time of clip trimming boundary in seconds */
+  trimOut?: number;
 };
 
 // ─── RasterSurface ────────────────────────────────────────────────────────────
@@ -105,14 +109,25 @@ export class RasterSurface {
 
     // Map tiles to artifacts based on timestamp, not array index.
     // This prevents blank gaps when artifacts.length < tileCount (heavy zoom).
-    const firstTimestamp = artifacts[0]?.timestampMs ?? 0;
-    const lastTimestamp = artifacts[artifacts.length - 1]?.timestampMs ?? 0;
+    const hasTrim = layout.trimIn !== undefined && layout.trimOut !== undefined;
+    const firstTimestamp = hasTrim ? layout.trimIn! * 1000 : (artifacts[0]?.timestampMs ?? 0);
+    const lastTimestamp = hasTrim ? layout.trimOut! * 1000 : (artifacts[artifacts.length - 1]?.timestampMs ?? 0);
     const timeSpan = lastTimestamp - firstTimestamp;
 
+    // Calculate pixelsPerSecond derived from total clip duration in seconds
+    const duration = hasTrim ? (layout.trimOut! - layout.trimIn!) : (timeSpan / 1000);
+    const pixelsPerSecond = duration > 0 ? (clipWidthPx / duration) : 100;
+
     for (let i = 0; i < tileCount; i++) {
-      // Find the artifact closest to this tile's timestamp position
-      const tileRatio = tileCount > 1 ? i / (tileCount - 1) : 0;
-      const targetTimestamp = firstTimestamp + timeSpan * tileRatio;
+      // Find the artifact closest to this tile's physical timeline position
+      let targetTimestamp = firstTimestamp;
+      if (hasTrim) {
+        // Linear mapping of the tile start index to timeline time
+        targetTimestamp = (layout.trimIn! + (i * targetTileW) / pixelsPerSecond) * 1000;
+      } else {
+        const tileRatio = tileCount > 1 ? i / (tileCount - 1) : 0;
+        targetTimestamp = firstTimestamp + timeSpan * tileRatio;
+      }
 
       // Find closest valid artifact by timestamp (unbounded - no threshold)
       let idx = 0;
