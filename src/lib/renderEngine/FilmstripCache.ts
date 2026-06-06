@@ -148,7 +148,25 @@ export class FilmstripCache {
 
   constructor(memoryBudgetMB: number = 100) {
     this.memoryBudgetBytes = memoryBudgetMB * 1024 * 1024;
-    this.tileCache = new FilmstripTileCache(memoryBudgetMB);
+    this.tileCache = new FilmstripTileCache(memoryBudgetMB, (art) => this.isArtifactActive(art));
+  }
+
+  /**
+   * Returns true if the given artifact is currently referenced in active clip entries
+   * or pending updates.
+   */
+  isArtifactActive(artifact: TransportArtifact): boolean {
+    for (const entry of this.entries.values()) {
+      if (entry.artifacts.includes(artifact)) {
+        return true;
+      }
+    }
+    for (const pending of this.pendingArtifacts) {
+      if (pending.artifact === artifact) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -190,30 +208,47 @@ export class FilmstripCache {
     for (const [clipId, artifacts] of updatesByClip) {
       const entry = this.entries.get(clipId);
       if (!entry) {
-        // Entry was invalidated during RAF delay - close bitmaps
+        // Entry was invalidated during RAF delay - close bitmaps if not cached
         for (const artifact of artifacts) {
-          artifact.bitmap.close();
+          if (!this.tileCache.isArtifactCached(artifact)) {
+            try {
+              artifact.bitmap.close();
+            } catch (e) {}
+          }
         }
         continue;
       }
 
       // Merge artifacts (dedupe by timestamp, keep highest tier)
       for (const artifact of artifacts) {
+        // DEFENSIVE: Skip if already closed/invalid
+        if (!artifact.bitmap || artifact.bitmap.width === 0 || artifact.bitmap.height === 0) {
+          continue;
+        }
+
         const existingIdx = entry.artifacts.findIndex((a) => a.timestampMs === artifact.timestampMs);
 
         if (existingIdx >= 0) {
           const existing = entry.artifacts[existingIdx];
           if (artifact.spatialTier > existing.spatialTier) {
             // Higher tier - replace
-            existing.bitmap.close();
+            if (!this.tileCache.isArtifactCached(existing)) {
+              try {
+                existing.bitmap.close();
+              } catch (e) {}
+            }
             entry.memoryBytes -= existing.width * existing.height * 4;
             this.currentMemoryBytes -= existing.width * existing.height * 4;
             entry.artifacts[existingIdx] = artifact;
             entry.memoryBytes += artifact.width * artifact.height * 4;
             this.currentMemoryBytes += artifact.width * artifact.height * 4;
           } else {
-            // Lower or same tier - discard new artifact
-            artifact.bitmap.close();
+            // Lower or same tier - discard new artifact if not cached
+            if (!this.tileCache.isArtifactCached(artifact)) {
+              try {
+                artifact.bitmap.close();
+              } catch (e) {}
+            }
             continue;
           }
         } else {
@@ -560,6 +595,9 @@ export class FilmstripCache {
 
   private _disposeArtifacts(artifacts: TransportArtifact[]): void {
     for (const artifact of artifacts) {
+      if (this.tileCache.isArtifactCached(artifact)) {
+        continue;
+      }
       try {
         artifact.bitmap.close();
       } catch (err) {
