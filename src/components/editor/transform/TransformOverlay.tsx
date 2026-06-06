@@ -95,6 +95,13 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
   const { execute } = useHistoryStore();
 
   const [isDragging, setIsDragging] = useState(false);
+  const [snappedX, setSnappedX] = useState(false);
+  const [snappedY, setSnappedY] = useState(false);
+  const snappedXRef = useRef<boolean>(false);
+  const snappedYRef = useRef<boolean>(false);
+  const snapMouseXRef = useRef<number>(0);
+  const snapMouseYRef = useRef<number>(0);
+
   const overlayRef = useRef<HTMLDivElement>(null);
   const clickCycleRef = useRef<{ signature: string; index: number }>({ signature: "", index: -1 });
   const dragCursorRef = useRef<string | null>(null);
@@ -203,8 +210,13 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
 
       e.preventDefault();
       e.stopPropagation();
-      traceSelect("transform handle mousedown", { handle, clipId: selectedClip.id, selectedClipIds });
       setIsDragging(true);
+      setSnappedX(false);
+      setSnappedY(false);
+      snappedXRef.current = false;
+      snappedYRef.current = false;
+      snapMouseXRef.current = 0;
+      snapMouseYRef.current = 0;
 
       const rect = overlayRef.current?.getBoundingClientRect();
       if (!rect) return;
@@ -297,8 +309,10 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
       };
 
       const newTransform = calculateTransform(startClip, activeTransform.handle, activeTransform.startMousePos, canvasCoords, constraints, startAngleRef.current);
-      // Professional magnetic center snap: while moving/resizing, snap clip center
-      // to canvas center when within threshold. Rotation is excluded.
+      // Stateful magnetic center snapping (like CapCut):
+      // - Snap-in when calculated center gets close to canvas center.
+      // - Locked snap state with escape threshold: the user must drag their mouse past the escape threshold
+      //   to release the magnetic snap lock, providing a tactile, sticky magnetic force feel.
       if (activeTransform.handle !== "rotate") {
         const nextX = newTransform.x ?? startClip.x;
         const nextY = newTransform.y ?? startClip.y;
@@ -309,11 +323,45 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
         const canvasCenterX = canvasWidth / 2;
         const canvasCenterY = canvasHeight / 2;
 
-        if (Math.abs(nextCenterX - canvasCenterX) <= CENTER_MAGNET_SNAP_PX) {
-          newTransform.x = canvasCenterX - nextW / 2;
+        const SNAP_IN_THRESHOLD = 8;
+        const ESCAPE_THRESHOLD = 20;
+
+        // X Axis Magnet Snapping
+        if (snappedXRef.current) {
+          const deltaMouseX = Math.abs(canvasCoords.x - snapMouseXRef.current);
+          if (deltaMouseX > ESCAPE_THRESHOLD) {
+            snappedXRef.current = false;
+            setSnappedX(false);
+          } else {
+            // Keep locked to center
+            newTransform.x = canvasCenterX - nextW / 2;
+          }
+        } else {
+          if (Math.abs(nextCenterX - canvasCenterX) <= SNAP_IN_THRESHOLD) {
+            snappedXRef.current = true;
+            snapMouseXRef.current = canvasCoords.x;
+            setSnappedX(true);
+            newTransform.x = canvasCenterX - nextW / 2;
+          }
         }
-        if (Math.abs(nextCenterY - canvasCenterY) <= CENTER_MAGNET_SNAP_PX) {
-          newTransform.y = canvasCenterY - nextH / 2;
+
+        // Y Axis Magnet Snapping
+        if (snappedYRef.current) {
+          const deltaMouseY = Math.abs(canvasCoords.y - snapMouseYRef.current);
+          if (deltaMouseY > ESCAPE_THRESHOLD) {
+            snappedYRef.current = false;
+            setSnappedY(false);
+          } else {
+            // Keep locked to center
+            newTransform.y = canvasCenterY - nextH / 2;
+          }
+        } else {
+          if (Math.abs(nextCenterY - canvasCenterY) <= SNAP_IN_THRESHOLD) {
+            snappedYRef.current = true;
+            snapMouseYRef.current = canvasCoords.y;
+            setSnappedY(true);
+            newTransform.y = canvasCenterY - nextH / 2;
+          }
         }
       }
 
@@ -342,6 +390,10 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
     traceSelect("transform mouseup", { clipId: activeTransform.clipId, selectedClipIds });
 
     setIsDragging(false);
+    setSnappedX(false);
+    setSnappedY(false);
+    snappedXRef.current = false;
+    snappedYRef.current = false;
     if (dragCursorRef.current) {
       const cursorClass = getCursorClass(dragCursorRef.current);
       if (cursorClass) {
@@ -444,8 +496,8 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
   const clipCenterY = selectedClip.y + selectedClip.height / 2;
   const canvasCenterX = canvasWidth / 2;
   const canvasCenterY = canvasHeight / 2;
-  const showVerticalCenterGuide = isDragging && Math.abs(clipCenterX - canvasCenterX) <= CENTER_GUIDE_SNAP_PX;
-  const showHorizontalCenterGuide = isDragging && Math.abs(clipCenterY - canvasCenterY) <= CENTER_GUIDE_SNAP_PX;
+  const showVerticalCenterGuide = isDragging && snappedX;
+  const showHorizontalCenterGuide = isDragging && snappedY;
   const centerScreen = canvasToScreen(canvasCenterX, canvasCenterY, viewport, { width: canvasWidth, height: canvasHeight }, scale, zeroOffset);
 
   return (
@@ -485,8 +537,15 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
           zIndex: 10,
         }}
       >
-        {/* Sleek, professional semi-transparent white border with a sharp outer dark stroke */}
-        <div className="absolute border border-white inset-0 pointer-events-none transition-all duration-75" />
+        {/* Sleek, professional semi-transparent border, highlighted in red with a glow when snapped to center */}
+        <div 
+          className="absolute border inset-0 pointer-events-none transition-all duration-75"
+          style={{
+            borderColor: (showVerticalCenterGuide || showHorizontalCenterGuide) ? "#ff3b30" : "#ffffff",
+            boxShadow: (showVerticalCenterGuide || showHorizontalCenterGuide) ? "0 0 8px rgba(255, 59, 48, 0.6)" : "0 2px 4px rgba(0, 0, 0, 0.15)",
+            borderWidth: "1px",
+          }}
+        />
 
         {/* Move surface - explicit drag target across full selected bounds */}
         <div
@@ -517,11 +576,12 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
         <div
           className="absolute pointer-events-none"
           style={{
-            left: centerScreen.x,
+            left: `${centerScreen.x}px`,
             top: 0,
-            width: 1,
-            height: displayHeight,
-            background: "var(--color-accent)",
+            width: "1px",
+            height: `${displayHeight}px`,
+            backgroundColor: "#ff3b30",
+            boxShadow: "0 0 4px rgba(255, 59, 48, 0.6)",
             zIndex: 14,
           }}
         />
@@ -531,10 +591,11 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
           className="absolute pointer-events-none"
           style={{
             left: 0,
-            top: centerScreen.y,
-            width: displayWidth,
-            height: 1,
-            background: "var(--color-accent)",
+            top: `${centerScreen.y}px`,
+            width: `${displayWidth}px`,
+            height: "1px",
+            backgroundColor: "#ff3b30",
+            boxShadow: "0 0 4px rgba(255, 59, 48, 0.6)",
             zIndex: 14,
           }}
         />

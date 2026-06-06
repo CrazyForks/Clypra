@@ -30,23 +30,32 @@ function calculateTextHeight(
     const ctx = canvas.getContext("2d") as any;
     if (!ctx) return fontSize * lineHeight * 1.5;
     ctx.font = `${bold ? "bold" : "normal"} ${fontSize}px ${fontFamily}`;
-    
-    const words = text.split(" ");
+
+    // Break text character-by-character (like CapCut) so that when
+    // the user drags the width handle, every character wraps exactly
+    // at the bounding box edge — no word overflows.
     let lineCount = 0;
     let currentLine = "";
-    
-    for (let i = 0; i < words.length; i++) {
-      const word = words[i];
-      const testLine = currentLine ? `${currentLine} ${word}` : word;
-      const metrics = ctx.measureText(testLine);
-      if (metrics.width > maxWidth && currentLine) {
+
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      // Hard line-break: count it and start a fresh line
+      if (char === "\n") {
         lineCount++;
-        currentLine = word;
+        currentLine = "";
+        continue;
+      }
+      const testLine = currentLine + char;
+      const metrics = ctx.measureText(testLine);
+      if (metrics.width > maxWidth && currentLine.length > 0) {
+        lineCount++;
+        currentLine = char;
       } else {
         currentLine = testLine;
       }
     }
-    if (currentLine) {
+    // Count the last partial line
+    if (currentLine.length > 0) {
       lineCount++;
     }
     return Math.max(1, lineCount) * fontSize * lineHeight;

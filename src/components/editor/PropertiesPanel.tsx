@@ -37,17 +37,41 @@ export const PropertiesPanel: React.FC = () => {
   const textClip = selectedClip as unknown as TextClip;
 
   const handleUpdate = (key: string, value: any) => {
-    const oldTransform = { [key]: (selectedClip as any)[key] };
-    const newTransform = { [key]: value };
+    const oldTransform: Record<string, any> = { [key]: (selectedClip as any)[key] };
+    const newTransform: Record<string, any> = { [key]: value };
+
+    // Clear styleId when user manually customizes styling properties
+    // Commented out to support programmatic API style overrides without losing preset association
+    /*
+    const stylingKeys = ["color", "fontFamily", "fontWeight", "fontStyle", "stroke", "shadow", "background", "align", "valign", "letterSpacing"];
+    if (stylingKeys.includes(key) && (selectedClip as any).styleId) {
+      oldTransform.styleId = (selectedClip as any).styleId;
+      newTransform.styleId = undefined;
+    }
+    */
+
     execute(new TransformClipCommand(selectedClipId, oldTransform, newTransform));
   };
 
   const handleUpdateMultiple = (fields: Record<string, any>) => {
     const oldFields: Record<string, any> = {};
+    const newFields = { ...fields };
     for (const key in fields) {
       oldFields[key] = (selectedClip as any)[key];
     }
-    execute(new TransformClipCommand(selectedClipId, oldFields, fields));
+
+    // Clear styleId when styling properties are modified in batch, unless styleId is explicitly being set
+    // Commented out to support programmatic API style overrides without losing preset association
+    /*
+    const stylingKeys = ["color", "fontFamily", "fontWeight", "fontStyle", "stroke", "shadow", "background", "align", "valign", "letterSpacing"];
+    const hasStylingKey = Object.keys(fields).some((k) => stylingKeys.includes(k));
+    if (hasStylingKey && (selectedClip as any).styleId && !("styleId" in fields)) {
+      oldFields.styleId = (selectedClip as any).styleId;
+      newFields.styleId = undefined;
+    }
+    */
+
+    execute(new TransformClipCommand(selectedClipId, oldFields, newFields));
   };
 
   const handleApplyPreset = (preset: any) => {
@@ -65,6 +89,7 @@ export const PropertiesPanel: React.FC = () => {
       shadow: preset.shadow,
       background: preset.background,
       keyframes: preset.keyframes,
+      styleId: undefined, // Clear the preset styleId
     });
   };
 

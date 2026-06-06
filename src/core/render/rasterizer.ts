@@ -17,7 +17,7 @@
 
 import type { EvaluatedScene, EvaluatedMediaLayer, EvaluatedTextLayer } from "../evaluation/types";
 import { getResourceCache } from "../resources/ResourceCache";
-import { defaultConfig as engineDefaultConfig, evaluateScene as engineEvaluateScene, textEffectConfigToScene, type TextEffectConfig, _buildConfig, layerToTextEffectConfig, CanvasDevice } from "@clypra/engine";
+import { defaultConfig as engineDefaultConfig, evaluateScene as engineEvaluateScene, textEffectConfigToScene, type TextEffectConfig, _buildConfig, layerToTextEffectConfig, CanvasDevice, TextEffectBuilder } from "@clypra/engine";
 import { useEffectsStore } from "../../features/text-effects/store/effectsStore";
 
 
@@ -342,29 +342,85 @@ function rasterizeTextLayer(ctx: CanvasRenderingContext2D | OffscreenCanvasRende
   if (layer.styleId) {
     const effectDef = useEffectsStore.getState().definitions[layer.styleId];
     if (effectDef) {
-      // fontSize for _buildConfig ratio: use the AUTHORED fontSize (layer.fontSize,
-      // unscaled). _buildConfig computes ratio = fontSize / 100 to proportionally
-      // scale blur, spread, stroke widths, etc. relative to the studio's 100px
-      // reference. If we pass the render-resolution fontSize (which can be 2-4×
-      // larger on high-res canvases), all blur and spread values get multiplied by
-      // that same factor — producing the blown-out glow visible in the editor vs
-      // studio. The canvas dimensions (offW/offH) already encode the correct render
-      // size; the engine centers text within them independently of this ratio.
       const authoredFontSize = layer.fontSize;
-      const builtCfg = _buildConfig(effectDef, layer.text, authoredFontSize, offW, offH, layer.time, layer.clipStartTime, layer.clipDuration);
-      engineConfig = {
-        ...engineDefaultConfig,
-        ...builtCfg,
-        // _buildConfig writes width/height (local engine keys).
-        // @clypra/engine uses canvasWidth/canvasHeight for centering.
-        canvasWidth: offW,
-        canvasHeight: offH,
-        // Override fontSize with the render-resolution value so text fills
-        // the on-canvas layer bounds correctly. Effect parameters (blur,
-        // spread, strokes) remain at authored scale from builtCfg above.
-        fontSize,
-        fontFamily: layer.fontFamily || effectDef.font?.family,
-      } as TextEffectConfig;
+      const builder = TextEffectBuilder.fromDefinition(
+        effectDef,
+        layer.text,
+        authoredFontSize,
+        offW,
+        offH
+      );
+
+      const builtCfg = builder.buildConfig();
+      if (layer.time !== undefined) (builtCfg as any).time = layer.time;
+      if (layer.clipStartTime !== undefined) (builtCfg as any).clipStartTime = layer.clipStartTime;
+      if (layer.clipDuration !== undefined) (builtCfg as any).clipDuration = layer.clipDuration;
+
+      // Merge manual styling overrides from the NLE layer properties
+      if (layer.color) {
+        if (layer.color.includes(",")) {
+          const stops = layer.color.split(",").map((c, idx, arr) => ({
+            color: c.trim(),
+            offset: Math.round((idx / (arr.length - 1)) * 100)
+          }));
+          builder.setFillGradient(90, stops);
+        } else {
+          builder.setFillColor(layer.color);
+        }
+      }
+
+      builder.setFont({
+        family: layer.fontFamily || effectDef.font?.family,
+        size: fontSize, // Use render-resolution size
+        weight: typeof layer.fontWeight === "number" ? layer.fontWeight : layer.fontWeight === "bold" ? 700 : 400,
+        style: layer.fontStyle || "normal",
+        letterSpacing: layer.letterSpacing ?? 0,
+        lineHeight: layer.lineHeight ?? 1.2
+      });
+
+      builder.setCanvas({
+        posX: layer.textAlign || "center",
+        posY: layer.verticalAlign === "middle" ? "middle" : (layer.verticalAlign || "middle")
+      });
+
+      // Override stroke if user explicitly configured it or disabled it
+      if (layer.stroke) {
+        builder.setStroke({
+          enabled: true,
+          color: layer.stroke.color,
+          width: layer.stroke.width * scaleY
+        });
+      } else {
+        builder.setStroke({ enabled: false });
+      }
+
+      // Override shadow if user explicitly configured it or disabled it
+      if (layer.shadow) {
+        builder.setShadow({
+          enabled: true,
+          color: layer.shadow.color,
+          blur: layer.shadow.blur * scaleY,
+          offsetX: layer.shadow.offsetX * scaleX,
+          offsetY: layer.shadow.offsetY * scaleY
+        });
+      } else {
+        builder.setShadow({ enabled: false });
+      }
+
+      // Override background panel if user explicitly configured it or disabled it
+      if (layer.background) {
+        builder.setPanel({
+          enabled: true,
+          color: layer.background.color,
+          radius: layer.background.borderRadius * scaleY,
+          paddingX: layer.background.padding * scaleX,
+          paddingY: layer.background.padding * scaleY
+        });
+      } else {
+        builder.setPanel({ enabled: false });
+      }
+
+      engineConfig = builder.buildConfig();
     } else {
       // styleId present but definition not yet in cache — trigger fetch in background
       // and fall back to plain text until it resolves and redraws.
