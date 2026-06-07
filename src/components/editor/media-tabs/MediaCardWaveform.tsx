@@ -37,18 +37,26 @@ export const MediaCardWaveform: React.FC<MediaCardWaveformProps> = ({ audioPath,
         setIsLoading(true);
         setHasError(false);
 
+        // Log the resolved audio path for debugging
+        console.log("[MediaCardWaveform] Fetching audio from:", audioPath);
+
         // Create audio context
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         const audioContext = new AudioContextClass();
 
         // Fetch and decode audio
         const response = await fetch(audioPath);
+        console.log("[MediaCardWaveform] Fetch response status:", response.status, response.ok);
+
         if (!response.ok) {
           throw new Error(`Failed to fetch audio: ${response.status}`);
         }
 
         const arrayBuffer = await response.arrayBuffer();
+        console.log("[MediaCardWaveform] ArrayBuffer size:", arrayBuffer.byteLength);
+
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        console.log("[MediaCardWaveform] Decoded audio successfully:", audioBuffer.duration, "seconds");
 
         if (isCancelled) {
           audioContext.close();
@@ -86,17 +94,12 @@ export const MediaCardWaveform: React.FC<MediaCardWaveformProps> = ({ audioPath,
 
         audioContext.close();
       } catch (error) {
-        console.error("[MediaCardWaveform] Failed to generate waveform:", error);
-        // Generate fallback waveform pattern for unsupported formats
+        console.error("[MediaCardWaveform] Failed to generate waveform for:", audioPath, error);
+        // Show flat line pattern to indicate unsupported format (honest UX)
         if (!isCancelled) {
-          const fallback = Array.from({ length: 100 }, (_, i) => {
-            // Create a more natural looking waveform pattern
-            const baseWave = Math.sin(i * 0.15) * 0.4;
-            const variation = Math.sin(i * 0.4) * 0.2;
-            const noise = (Math.random() - 0.5) * 0.1;
-            return Math.abs(baseWave + variation + noise) + 0.2;
-          });
-          setWaveformData(fallback);
+          // Flat line with very minimal variation to clearly indicate "no real data"
+          const flatLine = Array.from({ length: 100 }, () => 0.15);
+          setWaveformData(flatLine);
           setHasError(true);
           setIsLoading(false);
         }
@@ -167,10 +170,10 @@ export const MediaCardWaveform: React.FC<MediaCardWaveformProps> = ({ audioPath,
         </div>
       )}
 
-      {/* Error indicator (subtle, shown only on hover) */}
+      {/* Error indicator - honest signal that waveform is unavailable */}
       {hasError && !isLoading && (
-        <div className="absolute bottom-1 right-1 bg-orange-500/80 px-1 py-0.5 rounded text-[8px] text-white opacity-0 group-hover:opacity-100 transition-opacity" title="Preview waveform (format may have limited support)">
-          Preview
+        <div className="absolute bottom-1 left-1 bg-text-muted/20 px-1.5 py-0.5 rounded text-[9px] text-text-muted/70" title="Waveform unavailable for this format">
+          No waveform
         </div>
       )}
     </div>
