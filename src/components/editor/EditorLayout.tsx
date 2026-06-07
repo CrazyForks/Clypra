@@ -130,6 +130,7 @@ export const EditorLayout: React.FC = () => {
         text: item.text || item.name || "Text", // Use effect's default text first, then name as fallback
         canvasWidth: project?.canvasWidth || 1920,
         canvasHeight: project?.canvasHeight || 1080,
+        textRole: "title", // Text effects and templates are titles, not captions
         ...presetConfig,
         // Map styling properties from custom text tab effects or templates
         fontFamily: item.fontFamily,
