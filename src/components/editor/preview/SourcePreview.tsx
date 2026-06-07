@@ -33,23 +33,7 @@ export const SourcePreview: React.FC = () => {
   const [duration, setDuration] = useState(0);
   const [useGPU, setUseGPU] = useState(USE_GPU_PREVIEW && sourceAsset?.type === "video");
   const [gpuFailed, setGpuFailed] = useState(false);
-  const [videoError, setVideoError] = useState(false);
   const sourceCtxRef = useRef<SourcePlaybackContext | null>(null);
-
-  // Handle video element errors (unsupported codecs) - fallback to GPU preview
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || sourceAsset?.type !== "video" || useGPU) return;
-
-    const handleError = () => {
-      console.warn("[SourcePreview] HTML5 video failed (unsupported codec), falling back to GPU preview");
-      setVideoError(true);
-      setUseGPU(true); // Force GPU preview for unsupported formats
-    };
-
-    video.addEventListener("error", handleError);
-    return () => video.removeEventListener("error", handleError);
-  }, [sourceAsset?.id, useGPU, sourceAsset?.type]);
 
   // Get source context from active session and bind media element
   useEffect(() => {
@@ -119,7 +103,6 @@ export const SourcePreview: React.FC = () => {
   useEffect(() => {
     setUseGPU(USE_GPU_PREVIEW && sourceAsset?.type === "video");
     setGpuFailed(false);
-    setVideoError(false);
   }, [sourceAsset?.id]);
 
   const handleSeek = useCallback(
@@ -381,7 +364,7 @@ export const SourcePreview: React.FC = () => {
       <div className="flex-1 flex items-center justify-center overflow-hidden bg-[#06080a] relative">
         <div className="w-full h-full flex items-center justify-center relative z-10">
           {sourceAsset.type === "video" ? (
-            (useGPU || videoError) && !gpuFailed ? (
+            useGPU && !gpuFailed ? (
               <GPUPreview
                 videoPath={sourceAsset.path}
                 currentTime={currentTime}
