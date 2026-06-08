@@ -81,7 +81,7 @@ export function evaluateTimelineScene(time: number, clips: Clip[], tracks: Track
     // The rasterizer draws array elements in order: [0] first, [last] last
     // Canvas compositing: last drawn = on top
     // So: higher trackIndex → earlier in array, lower trackIndex → later in array
-    const trackOrder = a.trackIndex - b.trackIndex; // ASC: higher index first (draws early/below), lower index last (draws late/on top)
+    const trackOrder = b.trackIndex - a.trackIndex; // DESC: higher index first (draws early/below), lower index last (draws late/on top)
     if (trackOrder !== 0) return trackOrder;
     const zOrder = a.zIndex - b.zIndex;
     if (zOrder !== 0) return zOrder;
@@ -94,9 +94,9 @@ export function evaluateTimelineScene(time: number, clips: Clip[], tracks: Track
     console.log(`[evaluateTimelineScene] Sorted ${sortedClips.length} clips (rasterizer draws [0] first, [last] last, last=on top):`);
     sortedClips.forEach((clip, idx) => {
       const trackLabel = clip.trackIndex === 0 ? "TOP in UI" : clip.trackIndex === maxTrackIdx ? "BOTTOM in UI" : "middle";
-      const drawLabel = idx === sortedClips.length - 1 ? "LAST (ON TOP)" : idx === 0 ? "FIRST (BELOW)" : `layer ${idx}`;
+      const drawLabel = idx === sortedClips.length - 1 ? "draws LAST (on top)" : idx === 0 ? "draws FIRST (bottom)" : `draws at ${idx}`;
       const asset = clip.mediaId; // Just for reference
-      console.log(`  [${idx}] trackIdx=${clip.trackIndex} (${trackLabel}), role=${clip.role}, draws ${drawLabel}, clipId=${clip.id.substring(0, 8)}`);
+      console.log(`  [${idx}] trackIdx=${clip.trackIndex} (${trackLabel}), role=${clip.role}, ${drawLabel}, clipId=${clip.id.substring(0, 8)}`);
     });
   }
 
