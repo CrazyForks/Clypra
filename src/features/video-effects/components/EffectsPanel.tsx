@@ -1,6 +1,7 @@
 /**
  * Main Effects Panel Component
  * Combines Overlays, Effects, and Transitions into a single tabbed interface
+ * Following the same design pattern as Text and Stickers tabs
  */
 
 import React, { useState } from "react";
@@ -10,43 +11,43 @@ import { TransitionPicker } from "./TransitionPicker";
 import type { OverlayAsset, EffectPreset, TransitionPreset } from "../types";
 import { useTimelineStore } from "@/store/timelineStore";
 import { useUIStore } from "@/store/uiStore";
+import { Button } from "@/components/ui/Button";
+import { AlertCircle } from "lucide-react";
 
 type EffectTab = "overlays" | "effects" | "transitions";
 
 export function EffectsPanel() {
-  const [activeTab, setActiveTab] = useState<EffectTab>("overlays");
-  const selectedClipId = useUIStore((state) => state.selectedClipId);
+  const [activeTab, setActiveTab] = useState<EffectTab>("effects");
+  const selectedClipIds = useUIStore((state) => state.selectedClipIds);
 
   const handleOverlaySelect = async (overlay: OverlayAsset) => {
-    if (!selectedClipId) {
+    if (!selectedClipIds || selectedClipIds.length === 0) {
       // Show toast or notification
       console.warn("No clip selected");
       return;
     }
 
     const { applyOverlayToClip } = await import("../utils/applyOverlay");
-    await applyOverlayToClip(selectedClipId, overlay);
+    await applyOverlayToClip(selectedClipIds[0], overlay);
   };
 
   const handleEffectSelect = (effect: EffectPreset) => {
-    if (!selectedClipId) {
+    if (!selectedClipIds || selectedClipIds.length === 0) {
       console.warn("No clip selected");
       return;
     }
 
-    const { applyEffectToClip } = require("../utils/applyEffect");
-    applyEffectToClip(selectedClipId, effect);
+    const { applyEffectToClip } = await import("../utils/applyEffect");
+    applyEffectToClip(selectedClipIds[0], effect);
   };
 
   const handleTransitionSelect = (transition: TransitionPreset) => {
-    const selectedClipIds = useUIStore.getState().selectedClipIds || [];
-
-    if (selectedClipIds.length !== 2) {
+    if (!selectedClipIds || selectedClipIds.length !== 2) {
       console.warn("Select exactly 2 adjacent clips");
       return;
     }
 
-    const { applyTransitionBetweenClips } = require("../utils/applyTransition");
+    const { applyTransitionBetweenClips } = await import("../utils/applyTransition");
     try {
       applyTransitionBetweenClips(selectedClipIds[0], selectedClipIds[1], transition);
     } catch (error) {
@@ -54,44 +55,43 @@ export function EffectsPanel() {
     }
   };
 
+  const hasClipSelected = selectedClipIds && selectedClipIds.length > 0;
+  const hasTwoClipsSelected = selectedClipIds && selectedClipIds.length === 2;
+
   return (
-    <div className="h-full flex flex-col bg-zinc-950">
-      {/* Tab Headers */}
-      <div className="flex border-b border-zinc-800">
-        <button
-          onClick={() => setActiveTab("overlays")}
-          className={`
-            flex-1 px-4 py-3 text-sm font-medium transition
-            ${activeTab === "overlays" ? "text-blue-500 border-b-2 border-blue-500 bg-zinc-900" : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/50"}
-          `}
-        >
-          Overlays
-        </button>
-        <button
-          onClick={() => setActiveTab("effects")}
-          className={`
-            flex-1 px-4 py-3 text-sm font-medium transition
-            ${activeTab === "effects" ? "text-blue-500 border-b-2 border-blue-500 bg-zinc-900" : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/50"}
-          `}
-        >
-          Effects
-        </button>
-        <button
-          onClick={() => setActiveTab("transitions")}
-          className={`
-            flex-1 px-4 py-3 text-sm font-medium transition
-            ${activeTab === "transitions" ? "text-blue-500 border-b-2 border-blue-500 bg-zinc-900" : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900/50"}
-          `}
-        >
-          Transitions
-        </button>
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-surface/5 select-none">
+      {/* Top Header Control Navigation Row */}
+      <div className="flex items-center gap-2 p-1 border-b border-border/50 shrink-0 bg-surface/10">
+        <div className="grow overflow-x-auto flex items-center gap-2 pb-0.5 whitespace-nowrap" style={{ scrollbarWidth: "none" }}>
+          <button onClick={() => setActiveTab("effects")} className={`px-2 py-0.5 rounded-sm text-xs font-semibold transition-all cursor-pointer ${activeTab === "effects" ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-surface-raised/40"}`}>
+            Effects
+          </button>
+          <button onClick={() => setActiveTab("overlays")} className={`px-2 py-0.5 rounded-sm text-xs font-semibold transition-all cursor-pointer ${activeTab === "overlays" ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-surface-raised/40"}`}>
+            Overlays
+          </button>
+          <button onClick={() => setActiveTab("transitions")} className={`px-2 py-0.5 rounded-sm text-xs font-semibold transition-all cursor-pointer ${activeTab === "transitions" ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-surface-raised/40"}`}>
+            Transitions
+          </button>
+        </div>
       </div>
 
       {/* Selection Hint */}
-      {!selectedClipId && activeTab !== "transitions" && <div className="px-4 py-2 bg-yellow-500/10 border-b border-yellow-500/20 text-xs text-yellow-400">Select a clip on the timeline to apply {activeTab}</div>}
+      {!hasClipSelected && activeTab !== "transitions" && (
+        <div className="flex items-start gap-2 p-2.5 bg-yellow-500/10 border-b border-yellow-500/25 text-xs text-yellow-200 leading-normal">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>Select a clip on the timeline to apply {activeTab}</span>
+        </div>
+      )}
+
+      {!hasTwoClipsSelected && activeTab === "transitions" && (
+        <div className="flex items-start gap-2 p-2.5 bg-yellow-500/10 border-b border-yellow-500/25 text-xs text-yellow-200 leading-normal">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>Select exactly 2 adjacent clips on the timeline to apply transitions</span>
+        </div>
+      )}
 
       {/* Tab Content */}
-      <div className="flex-1 overflow-hidden">
+      <div className="grow overflow-y-auto scrollbar-thin">
         {activeTab === "overlays" && <OverlayPicker onSelect={handleOverlaySelect} />}
         {activeTab === "effects" && <EffectPicker onSelect={handleEffectSelect} />}
         {activeTab === "transitions" && <TransitionPicker onSelect={handleTransitionSelect} />}
