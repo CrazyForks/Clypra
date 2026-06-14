@@ -18,6 +18,7 @@ pub async fn download_whisper_model(
 ) -> Result<(), String> {
     use std::process::Command;
     use std::time::Instant;
+    use std::io::Write;
     
     eprintln!("🦀 [download_whisper_model] Starting download for model: {}", size);
     
@@ -46,27 +47,47 @@ pub async fn download_whisper_model(
         },
     );
 
-    // Use Python script to load the model, which will trigger automatic download via openai-whisper
-    // The openai-whisper library automatically downloads models to ~/.cache/whisper/
+    // Create a temporary Python script with inline dependencies (same format as transcribe.py)
+    let temp_script = format!(
+        r#"# /// script
+# dependencies = [
+#     "openai-whisper",
+# ]
+# ///
+import whisper
+print('Downloading Whisper model: {}...')
+model = whisper.load_model('{}')
+print('Model loaded successfully!')
+"#,
+        size, size
+    );
+
+    // Write to a temporary file
+    let temp_dir = std::env::temp_dir();
+    let script_path = temp_dir.join(format!("download_whisper_{}.py", size));
+    
+    let mut file = std::fs::File::create(&script_path)
+        .map_err(|e| format!("Failed to create temp script: {}", e))?;
+    file.write_all(temp_script.as_bytes())
+        .map_err(|e| format!("Failed to write temp script: {}", e))?;
+    
+    eprintln!("🦀 [download_whisper_model] Created temp script: {:?}", script_path);
+
     let start = Instant::now();
     
+    // Run the script using uv (which will install dependencies automatically)
     let output = Command::new("uv")
         .args(&[
             "run",
-            "python",
-            "-c",
-            &format!(
-                "import whisper; \
-                 print('Downloading Whisper model: {}...'); \
-                 model = whisper.load_model('{}'); \
-                 print('Model loaded successfully!');",
-                size, size
-            ),
+            script_path.to_str().unwrap(),
         ])
         .output()
         .map_err(|e| format!("Failed to execute download command: {}", e))?;
 
     let elapsed = start.elapsed();
+    
+    // Clean up temp script
+    let _ = std::fs::remove_file(&script_path);
     
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
