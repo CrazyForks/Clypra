@@ -232,7 +232,14 @@ export const CaptionsTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
           console.log(`[CaptionsTab] Audio extracted to: ${tempAudioPath}`);
 
           // Transcribe using Whisper with selected/default model and language
-          console.log(`[CaptionsTab] Transcribing with model: ${model}, language: ${language}`);
+          console.log(`[CaptionsTab] About to call transcribe_audio_local...`);
+          console.log(`[CaptionsTab] Parameters:`, {
+            audioPath: tempAudioPath,
+            modelSize: model,
+            language: language === "auto" ? null : language,
+            languageHints: captionSettings.languageHints.length > 0 ? captionSettings.languageHints : null,
+          });
+
           const resultJsonStr = await invoke<string>("transcribe_audio_local", {
             audioPath: tempAudioPath,
             modelSize: model,
@@ -240,7 +247,7 @@ export const CaptionsTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
             languageHints: captionSettings.languageHints.length > 0 ? captionSettings.languageHints : null,
           });
 
-          console.log(`[CaptionsTab] Transcription result:`, resultJsonStr);
+          console.log(`[CaptionsTab] Transcription completed, result:`, resultJsonStr);
           const result = JSON.parse(resultJsonStr);
 
           if (result.error) {
@@ -296,7 +303,8 @@ export const CaptionsTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
             });
           });
         } catch (clipError: any) {
-          console.error(`Error processing clip ${mediaClip.id}:`, clipError);
+          console.error(`[CaptionsTab] Error processing clip ${mediaClip.id}:`, clipError);
+          console.error(`[CaptionsTab] Error stack:`, clipError.stack);
           setErrorMsg(`Error: ${clipError.message || clipError}`);
         }
       }
@@ -307,6 +315,8 @@ export const CaptionsTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
         setErrorMsg("No captions were generated. Please check your audio contains speech.");
       }
     } catch (error: any) {
+      console.error(`[CaptionsTab] Top-level error:`, error);
+      console.error(`[CaptionsTab] Error stack:`, error.stack);
       setErrorMsg(error.message || "Failed to generate captions.");
     } finally {
       setIsGenerating(false);
