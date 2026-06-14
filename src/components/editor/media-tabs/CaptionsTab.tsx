@@ -194,6 +194,7 @@ export const CaptionsTab: React.FC<TabProps> = ({ onAddToTimeline }) => {
             audioPath: tempAudioPath,
             modelSize: model,
             language: language === "auto" ? null : language,
+            languageHints: captionSettings.languageHints.length > 0 ? captionSettings.languageHints : null,
           });
 
           const result = JSON.parse(resultJsonStr);

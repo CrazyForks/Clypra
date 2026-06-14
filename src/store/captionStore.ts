@@ -16,12 +16,14 @@ export interface CaptionSettings {
   language: string | "auto";
   activeModel: WhisperModelSize | null;
   models: Record<WhisperModelSize, ModelDownloadState>;
+  languageHints: string[]; // List of language codes to watch for (e.g., ["en", "es", "fr"])
 }
 
 interface CaptionStore {
   captionSettings: CaptionSettings;
   setLanguage: (lang: string | "auto") => void;
   setActiveModel: (size: WhisperModelSize) => void;
+  setLanguageHints: (hints: string[]) => void;
   updateModelDownloadState: (size: WhisperModelSize, state: Partial<ModelDownloadState>) => void;
   resetModelState: (size: WhisperModelSize) => void;
 }
@@ -39,6 +41,7 @@ export const useCaptionStore = create<CaptionStore>()(
       captionSettings: {
         language: "auto",
         activeModel: null,
+        languageHints: [], // Default: no hints, auto-detect all languages
         models: {
           tiny: { ...DEFAULT_MODEL_STATE },
           base: { ...DEFAULT_MODEL_STATE },
@@ -61,6 +64,14 @@ export const useCaptionStore = create<CaptionStore>()(
           captionSettings: {
             ...state.captionSettings,
             activeModel: size,
+          },
+        })),
+
+      setLanguageHints: (hints) =>
+        set((state) => ({
+          captionSettings: {
+            ...state.captionSettings,
+            languageHints: hints,
           },
         })),
 
@@ -96,6 +107,7 @@ export const useCaptionStore = create<CaptionStore>()(
         captionSettings: {
           language: state.captionSettings.language,
           activeModel: state.captionSettings.activeModel,
+          languageHints: state.captionSettings.languageHints,
           models: Object.fromEntries(
             Object.entries(state.captionSettings.models).map(([key, value]) => [
               key,

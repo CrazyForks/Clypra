@@ -266,6 +266,7 @@ pub async fn transcribe_audio_local(
     audio_path: String,
     model_size: Option<String>,
     language: Option<String>,
+    language_hints: Option<Vec<String>>,
 ) -> Result<String, String> {
     use std::process::Command;
     use std::fs;
@@ -275,6 +276,38 @@ pub async fn transcribe_audio_local(
     let lang_param = language.unwrap_or_else(|| "auto".to_string());
 
     eprintln!("🦀 [transcribe_audio_local] Transcribing: {} (model: {}, lang: {})", audio_path, model, lang_param);
+
+    // Build language hint prompt if hints are provided
+    let prompt = if let Some(hints) = language_hints {
+        if !hints.is_empty() {
+            let lang_names: Vec<String> = hints.iter().map(|code| {
+                match code.as_str() {
+                    "en" => "English",
+                    "es" => "Spanish",
+                    "fr" => "French",
+                    "de" => "German",
+                    "it" => "Italian",
+                    "pt" => "Portuguese",
+                    "ru" => "Russian",
+                    "ja" => "Japanese",
+                    "ko" => "Korean",
+                    "zh" => "Chinese",
+                    "ar" => "Arabic",
+                    "hi" => "Hindi",
+                    _ => code,
+                }
+            }).collect();
+            Some(format!("This audio may contain speech in {}. Transcribe accordingly.", lang_names.join(", ")))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some(ref p) = prompt {
+        eprintln!("🦀 [transcribe_audio_local] Using language hint prompt: {}", p);
+    }
 
     // Resolve script path robustly to handle different current working directories in Tauri
     let mut script_path = PathBuf::from("src/features/text-effects/transcribe.py");
@@ -300,19 +333,22 @@ pub async fn transcribe_audio_local(
     let script_path_str = script_path.to_str().ok_or("Failed to convert script path to string")?.to_string();
     eprintln!("🦀 [transcribe_audio_local] Resolved script path: {}", script_path_str);
 
-    // Build command arguments with model and language
+    // Build command arguments with model, language, and optional prompt
     let mut args = vec![
         "run".to_string(),
         script_path_str.clone(),
         audio_path.clone(),
+        format!("--model={}", model),
     ];
-    
-    // Add model size argument
-    args.push(format!("--model={}", model));
     
     // Add language argument if not auto
     if lang_param != "auto" {
         args.push(format!("--language={}", lang_param));
+    }
+
+    // Add prompt if generated from hints
+    if let Some(p) = prompt {
+        args.push(format!("--prompt={}", p));
     }
 
     // Call uv command to run our python script
