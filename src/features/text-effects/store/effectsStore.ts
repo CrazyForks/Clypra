@@ -266,7 +266,7 @@ export const useEffectsStore = create<EffectsState>((set, get) => ({
     set({ indexLoading: true, indexError: null });
 
     try {
-      const res = await fetch(`${API_BASE}/effects/${catKey}`, {
+      const res = await fetch(`${API_BASE}/text-effects/${catKey}`, {
         cache: "reload",
         headers: getApiHeaders(),
       });
@@ -323,7 +323,7 @@ export const useEffectsStore = create<EffectsState>((set, get) => ({
 
     // 4. Fetch from API (last resort)
     const catKey = category.toLowerCase();
-    const res = await fetch(`${API_BASE}/effects/${catKey}/${id}`, {
+    const res = await fetch(`${API_BASE}/text-effects/${catKey}/${id}`, {
       cache: "reload",
       headers: getApiHeaders(),
     });
@@ -376,7 +376,7 @@ export const useEffectsStore = create<EffectsState>((set, get) => ({
       return { prefetchingIds: nextPrefetching };
     });
 
-    fetch(`${API_BASE}/effects/${catKey}/${id}`, {
+    fetch(`${API_BASE}/text-effects/${catKey}/${id}`, {
       cache: "reload",
       headers: getApiHeaders(),
     })

@@ -34,7 +34,7 @@ export const TextEffectsApi = {
 
   // 1. Fetch summaries for category tab picker UI
   async getEffectsIndex(): Promise<TextEffectSummary[]> {
-    const res = await fetch(`${BASE}/effects`, {
+    const res = await fetch(`${BASE}/text-effects`, {
       cache: "reload",
       headers: getApiHeaders(),
     });
@@ -43,7 +43,7 @@ export const TextEffectsApi = {
   },
 
   async getEffectsByCategory(category: string): Promise<TextEffectSummary[]> {
-    const res = await fetch(`${BASE}/effects/${category}`, {
+    const res = await fetch(`${BASE}/text-effects/${category}`, {
       cache: "reload",
       headers: getApiHeaders(),
     });
@@ -59,7 +59,7 @@ export const TextEffectsApi = {
     if (this._effectsCache.has(cacheKey)) {
       data = this._effectsCache.get(cacheKey)!;
     } else {
-      const res = await fetch(`${BASE}/effects/${category}/${id}`, {
+      const res = await fetch(`${BASE}/text-effects/${category}/${id}`, {
         cache: "reload",
         headers: getApiHeaders(),
       });
@@ -84,7 +84,7 @@ export const TextEffectsApi = {
 
   // 3. Fetch summaries for template category tab picker UI
   async getTemplatesIndex(): Promise<TemplateDefinition[]> {
-    const res = await fetch(`${BASE}/templates`, {
+    const res = await fetch(`${BASE}/text-templates`, {
       cache: "reload",
       headers: getApiHeaders(),
     });
@@ -93,7 +93,7 @@ export const TextEffectsApi = {
   },
 
   async getTemplatesByCategory(category: string): Promise<TemplateDefinition[]> {
-    const res = await fetch(`${BASE}/templates/${category}`, {
+    const res = await fetch(`${BASE}/text-templates/${category}`, {
       cache: "reload",
       headers: getApiHeaders(),
     });
@@ -108,7 +108,7 @@ export const TextEffectsApi = {
       return this._lottieCache.get(cacheKey)!;
     }
 
-    const res = await fetch(`${BASE}/templates/${category}/${id}`, {
+    const res = await fetch(`${BASE}/text-templates/${category}/${id}`, {
       cache: "reload",
       headers: getApiHeaders(),
     });
