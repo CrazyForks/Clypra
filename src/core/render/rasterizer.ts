@@ -1137,7 +1137,7 @@ async function rasterizeTextLayer(ctx: CanvasRenderingContext2D | OffscreenCanva
       const sY = height / template.canvasHeight;
       ctx.scale(sX, sY);
 
-      renderer.drawFrame(ctx as CanvasRenderingContext2D, localTime);
+      renderer.drawFrame(ctx as CanvasRenderingContext2D, localTime, { skipClear: true });
       ctx.restore();
       return;
     }
