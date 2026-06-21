@@ -41,7 +41,7 @@ export function shouldScaleTextFontForHandle(handle: TransformHandle): boolean {
 
 export function calculateTextResizeFontSize(startFontSize: number, handle: TransformHandle, startTransform: { width: number; height: number }, nextTransform: { width?: number; height?: number }): number {
   const scale = calculateTextResizeScale(handle, startTransform, nextTransform);
-  return Math.max(10, Math.min(300, Math.round(startFontSize * scale)));
+  return Math.max(10, Math.min(1000, Math.round(startFontSize * scale)));
 }
 
 export function calculateTextResizeScale(handle: TransformHandle, startTransform: { width: number; height: number }, nextTransform: { width?: number; height?: number }): number {
@@ -229,6 +229,9 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
     if (!selectedClip || isDragging || !isClipActiveAtTime(selectedClip, currentTime) || !("text" in selectedClip)) return;
 
     const textClip = selectedClip as TextClip;
+    // Apply transform normalization to text effects (styleId) and text with background
+    // Template clips are excluded because their bounds are determined by the template's
+    // canvas dimensions and should be freely transformable without normalization
     if (!textClip.styleId && !textClip.background) return;
     if (!hasTextClipContentTransformDrift(textClip, canvasWidth, canvasHeight)) return;
 
@@ -907,7 +910,7 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
     if ("fontSize" in selectedClip) {
       const sizeScale = newWidth / Math.max(1, selectedClip.width);
       const currentFontSize = (selectedClip as any).fontSize || 48;
-      newVal.fontSize = Math.max(10, Math.min(300, Math.round(currentFontSize * sizeScale)));
+      newVal.fontSize = Math.max(10, Math.min(1000, Math.round(currentFontSize * sizeScale)));
     }
 
     execute(new TransformClipCommand(selectedClip.id, oldVal, newVal));
@@ -948,7 +951,7 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
     if ("fontSize" in selectedClip) {
       const sizeScale = newWidth / Math.max(1, selectedClip.width);
       const currentFontSize = (selectedClip as any).fontSize || 48;
-      newVal.fontSize = Math.max(10, Math.min(300, Math.round(currentFontSize * sizeScale)));
+      newVal.fontSize = Math.max(10, Math.min(1000, Math.round(currentFontSize * sizeScale)));
     }
 
     execute(new TransformClipCommand(selectedClip.id, oldVal, newVal));
