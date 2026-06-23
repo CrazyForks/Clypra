@@ -148,8 +148,9 @@ export class PreviewMediaPool {
   // This prevents evicting elements for clips that still exist but are temporarily inactive
   private timelineClipRegistry = new Map<string, string>(); // clipId -> cacheKey
   // TRANSITION SAFETY: Track recently removed clips to keep their elements available during transitions
-  // Format: cacheKey -> timestamp when removed
-  private recentlyRemovedClips = new Map<string, number>();
+  // Format: cacheKey -> { clipId: original clipId, timestamp: when removed }
+  // FINDING-003: Store original clipId to prevent key mismatch when element is rebound
+  private recentlyRemovedClips = new Map<string, { clipId: string; timestamp: number }>();
   private readonly TRANSITION_GRACE_PERIOD_MS = 500; // Keep elements for 500ms after removal
 
   private audios = new Map<string, ManagedAudio>();
@@ -273,8 +274,12 @@ export class PreviewMediaPool {
         for (const removedClipId of structuralChange.removed) {
           const cacheKey = this.timelineClipRegistry.get(removedClipId);
           if (cacheKey) {
-            // Mark as recently removed with timestamp (for transition grace period)
-            this.recentlyRemovedClips.set(cacheKey, now);
+            // FINDING-003: Store original clipId with timestamp for transition grace period
+            // This prevents key mismatch when element gets rebound to a new clip
+            this.recentlyRemovedClips.set(cacheKey, {
+              clipId: removedClipId,
+              timestamp: now,
+            });
           }
           this.timelineClipRegistry.delete(removedClipId);
         }
@@ -409,9 +414,9 @@ export class PreviewMediaPool {
       for (const [cacheKey, managed] of this.videoCache) {
         const isInGracePeriod = now < managed.registrationGraceUntil;
         const isInTimeline = timelineCacheKeys.has(cacheKey);
-        const isRecentlyRemoved = this.recentlyRemovedClips.has(cacheKey);
-        const recentRemovalTime = this.recentlyRemovedClips.get(cacheKey);
-        const isInTransitionGrace = isRecentlyRemoved && recentRemovalTime && now - recentRemovalTime < this.TRANSITION_GRACE_PERIOD_MS;
+        const recentRemoval = this.recentlyRemovedClips.get(cacheKey);
+        const isRecentlyRemoved = recentRemoval !== undefined;
+        const isInTransitionGrace = isRecentlyRemoved && recentRemoval && now - recentRemoval.timestamp < this.TRANSITION_GRACE_PERIOD_MS;
 
         // Only mark as orphaned if NOT in timeline AND NOT in transition grace AND past registration grace
         if (!isInTimeline && !isInGracePeriod && !isInTransitionGrace) {
@@ -427,16 +432,18 @@ export class PreviewMediaPool {
             managed.rvfcHandle = null;
           }
         } else if (isInTimeline) {
+          // ─── FINDING-002: Extend grace period when element is in timeline ───────
           // Element is in timeline - extend grace period (it's proven to be valid)
           // Also remove from recently removed list since it's back in the timeline
           this.recentlyRemovedClips.delete(cacheKey);
           managed.registrationGraceUntil = now + 10000; // Keep grace for 10 more seconds
+          // ────────────────────────────────────────────────────────────────────────
         }
       }
 
       // Clean up expired recently removed entries (older than grace period)
-      for (const [cacheKey, removalTime] of Array.from(this.recentlyRemovedClips.entries())) {
-        if (now - removalTime > this.TRANSITION_GRACE_PERIOD_MS) {
+      for (const [cacheKey, removal] of Array.from(this.recentlyRemovedClips.entries())) {
+        if (now - removal.timestamp > this.TRANSITION_GRACE_PERIOD_MS) {
           this.recentlyRemovedClips.delete(cacheKey);
         }
       }
@@ -514,19 +521,23 @@ export class PreviewMediaPool {
       }
     }
 
+    // ─── FINDING-003: Use original clipId for recently removed clips ────────────
     // TRANSITION SAFETY: Also include recently removed clips (within grace period)
     // This ensures rasterizer can access outgoing clip frames during transitions
+    // CRITICAL: Use the ORIGINAL clipId (stored at removal time) not the current
+    // managed.clipId which may have been reassigned to a new clip
     const now = performance.now();
-    for (const [cacheKey, removalTime] of this.recentlyRemovedClips) {
-      if (now - removalTime < this.TRANSITION_GRACE_PERIOD_MS) {
+    for (const [cacheKey, removal] of this.recentlyRemovedClips) {
+      if (now - removal.timestamp < this.TRANSITION_GRACE_PERIOD_MS) {
         const managed = this.videoCache.get(cacheKey);
         if (managed) {
-          // Use legacy key format: ${clipId}-${mediaId}
-          const legacyKey = `${managed.clipId}-${managed.mediaId}`;
+          // Use ORIGINAL clipId from removal record, not current managed.clipId
+          const legacyKey = `${removal.clipId}-${managed.mediaId}`;
           result.set(legacyKey, managed.element);
         }
       }
     }
+    // ─────────────────────────────────────────────────────────────────────────────
 
     return result;
   }

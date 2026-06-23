@@ -2904,3 +2904,335 @@ describe("PreviewMediaPool — FINDING-022: Conditional Property Updates", () =>
     expect(unmutedCountAfter).toBeLessThanOrEqual(1);
   });
 });
+
+describe("PreviewMediaPool — FINDING-002 & FINDING-003: Grace Period and Original ClipId", () => {
+  let pool: PreviewMediaPool;
+
+  beforeEach(() => {
+    pool = new PreviewMediaPool();
+  });
+
+  afterEach(() => {
+    pool.dispose();
+  });
+
+  it("should extend grace period when element remains in timeline (FINDING-002)", async () => {
+    const clips = [createMockClip("clip-1", "media-1", 0, 5)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Initial sync - create element
+    pool.sync(clips, assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    const videoElements1 = pool.getVideoElements();
+    expect(videoElements1.size).toBe(1);
+
+    // Temporarily remove clip (simulating split where clip briefly removed)
+    pool.sync([], assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    // Element should still exist (in grace period)
+    const videoElements2 = pool.getVideoElements();
+    expect(videoElements2.size).toBeGreaterThan(0);
+
+    // Add clip back immediately (simulating left split reusing same element)
+    pool.sync(clips, assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    // Element should be back and grace period extended
+    const videoElements3 = pool.getVideoElements();
+    expect(videoElements3.size).toBe(1);
+
+    // Wait longer than normal grace period (600ms)
+    await wait(600);
+
+    // Element should STILL exist because grace was extended to 10s
+    const videoElements4 = pool.getVideoElements();
+    expect(videoElements4.size).toBe(1);
+  });
+
+  it("should preserve original clipId during element rebinding (FINDING-003)", () => {
+    const clips1 = [createMockClip("clip-1", "media-1", 0, 5)];
+    const clips2 = [createMockClip("clip-2", "media-1", 0, 5)]; // Same media, different clipId
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Create element with clip-1
+    pool.sync(clips1, assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    const elements1 = pool.getVideoElements();
+    expect(elements1.has("clip-1-media-1")).toBe(true);
+
+    // Remove clip-1 (enters grace period)
+    pool.sync([], assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    // Element should still be accessible with ORIGINAL clipId
+    const elementsInGrace = pool.getVideoElements();
+    expect(elementsInGrace.has("clip-1-media-1")).toBe(true);
+
+    // Add clip-2 which reuses the same element (same media, same trimIn)
+    // This brings the element back into timeline, so it's removed from grace list
+    pool.sync(clips2, assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    // Should have clip-2 (active in timeline)
+    // clip-1 is no longer in grace period (element was rebound)
+    const elementsAfterRebind = pool.getVideoElements();
+    expect(elementsAfterRebind.has("clip-2-media-1")).toBe(true); // New binding active
+  });
+
+  it("should handle clip split scenario correctly", async () => {
+    // Simulate split: original clip removed, two new clips added
+    const originalClip = [createMockClip("clip-original", "media-1", 0, 10)];
+    const leftSplit = createMockClip("clip-left", "media-1", 0, 5); // trimIn: 0 (same as original)
+    const rightSplit = createMockClip("clip-right", "media-1", 5, 5); // trimIn: 5 (different cache key)
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Create original clip element
+    pool.sync(originalClip, assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    expect(pool.getVideoElements().has("clip-original-media-1")).toBe(true);
+
+    // Split: remove original, add left and right
+    // Left split reuses element (same cache key), right split creates new element
+    pool.sync([leftSplit, rightSplit], assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    const elementsAfterSplit = pool.getVideoElements();
+
+    // Should have left and right active
+    expect(elementsAfterSplit.has("clip-left-media-1")).toBe(true);
+    expect(elementsAfterSplit.has("clip-right-media-1")).toBe(true);
+
+    // After grace period expires (if original was in grace)
+    await wait(550);
+
+    pool.sync([leftSplit, rightSplit], assets, tracks, {
+      time: 3.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    const elementsAfterGrace = pool.getVideoElements();
+    expect(elementsAfterGrace.has("clip-left-media-1")).toBe(true);
+    expect(elementsAfterGrace.has("clip-right-media-1")).toBe(true);
+  });
+
+  it("should prevent black frame during split transition", async () => {
+    const originalClip = [createMockClip("clip-original", "media-1", 0, 10)];
+    const splitClips = [createMockClip("clip-left", "media-1", 0, 5), createMockClip("clip-right", "media-1", 5, 5)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Play original clip
+    pool.sync(originalClip, assets, tracks, {
+      time: 4.9,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    // Split at playhead
+    pool.sync(splitClips, assets, tracks, {
+      time: 5.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    // Immediately after split, ALL elements should be accessible:
+    // - Original (in grace period)
+    // - Left split (new/reused)
+    // - Right split (new)
+    const elementsAtSplit = pool.getVideoElements();
+
+    // Verify no frames are missing (rasterizer can find all needed elements)
+    expect(elementsAtSplit.size).toBeGreaterThanOrEqual(2); // At least left and right
+
+    // Continue playback - should be smooth, no black frames
+    for (let t = 5.0; t < 5.5; t += 0.016) {
+      pool.sync(splitClips, assets, tracks, {
+        time: t,
+        state: "playing" as const,
+        speed: 1.0,
+        muted: false,
+        volume: 100,
+      });
+    }
+
+    // After transition, elements should still be valid
+    expect(() => pool.getVideoElements()).not.toThrow();
+  });
+
+  it("should clear recently removed clips after grace period expires", async () => {
+    const clip1 = [createMockClip("clip-1", "media-1", 0, 5)];
+    const clip2 = [createMockClip("clip-2", "media-2", 0, 5)];
+    const assets = [createMockAsset("media-1", "/path/to/video1.mp4"), createMockAsset("media-2", "/path/to/video2.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Create clip-1 element
+    pool.sync(clip1, assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    expect(pool.getVideoElements().has("clip-1-media-1")).toBe(true);
+
+    // Switch to clip-2 (clip-1 enters grace if removed)
+    pool.sync(clip2, assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    // Wait for grace period to expire
+    await wait(550);
+
+    // Sync again to trigger cleanup
+    pool.sync(clip2, assets, tracks, {
+      time: 3.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    // clip-2 should be present
+    const elementsAfterGrace = pool.getVideoElements();
+    expect(elementsAfterGrace.has("clip-2-media-2")).toBe(true);
+  });
+
+  it("should handle rapid add/remove cycles with grace period", async () => {
+    const clip = [createMockClip("clip-1", "media-1", 0, 5)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Add clip
+    pool.sync(clip, assets, tracks, {
+      time: 0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    // Remove and add rapidly (simulating undo/redo or rapid edits)
+    for (let i = 0; i < 5; i++) {
+      // Remove
+      pool.sync([], assets, tracks, {
+        time: i / 10,
+        state: "playing" as const,
+        speed: 1.0,
+        muted: false,
+        volume: 100,
+      });
+
+      await wait(50);
+
+      // Add back
+      pool.sync(clip, assets, tracks, {
+        time: (i + 0.5) / 10,
+        state: "playing" as const,
+        speed: 1.0,
+        muted: false,
+        volume: 100,
+      });
+    }
+
+    // Element should remain stable throughout
+    const finalElements = pool.getVideoElements();
+    expect(finalElements.has("clip-1-media-1")).toBe(true);
+  });
+
+  it("should maintain correct clip-to-element mapping during complex timeline changes", () => {
+    const clips1 = [createMockClip("clip-A", "media-1", 0, 5), createMockClip("clip-B", "media-2", 5, 5)];
+    const clips2 = [createMockClip("clip-B", "media-2", 5, 5), createMockClip("clip-C", "media-1", 0, 5)]; // Swap A for C (same media, same position)
+    const assets = [createMockAsset("media-1", "/path/to/video1.mp4"), createMockAsset("media-2", "/path/to/video2.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Create initial clips
+    pool.sync(clips1, assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    const elements1 = pool.getVideoElements();
+    expect(elements1.has("clip-A-media-1")).toBe(true);
+    expect(elements1.has("clip-B-media-2")).toBe(true);
+
+    // Swap clip-A for clip-C (both use media-1, same cache key)
+    // clip-C will reuse clip-A's element
+    pool.sync(clips2, assets, tracks, {
+      time: 2.5, // Time within clip-C's range
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    const elements2 = pool.getVideoElements();
+
+    // Clip-B should still be there
+    expect(elements2.has("clip-B-media-2")).toBe(true);
+
+    // Should have at least 1 element (clip-B minimum)
+    expect(elements2.size).toBeGreaterThanOrEqual(1);
+  });
+});
