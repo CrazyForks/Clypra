@@ -3507,3 +3507,194 @@ describe("PreviewMediaPool — FINDING-014: Missing Seeking Guard", () => {
     expect(pauseCalled).toBe(false);
   });
 });
+
+// ─── FINDING-020: Dispose During Play Promise ───────────────────────────────────
+describe("PreviewMediaPool — FINDING-020: Dispose During Play Promise", () => {
+  let pool: PreviewMediaPool;
+
+  beforeEach(() => {
+    pool = new PreviewMediaPool();
+  });
+
+  afterEach(() => {
+    pool.dispose();
+  });
+
+  it("should set disposing flag before disposal operations", () => {
+    const clips = [createMockClip("clip-1", "media-1", 0, 10)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    pool.sync(clips, assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    const managed = Array.from((pool as any).videoCache.values())[0];
+    expect(managed.disposing).toBe(false);
+
+    // Simulate play promise in flight
+    managed.playPromiseInFlight = true;
+
+    // Dispose the pool
+    pool.dispose();
+
+    // disposing flag should be set immediately
+    expect(managed.disposing).toBe(true);
+  });
+
+  it("should cancel pending play promise during disposal", () => {
+    const clips = [createMockClip("clip-1", "media-1", 0, 10)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    pool.sync(clips, assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    const managed = Array.from((pool as any).videoCache.values())[0];
+
+    // Simulate play promise in flight
+    managed.playPromiseInFlight = true;
+    managed.playCancelRequested = false;
+
+    // Dispose the pool
+    pool.dispose();
+
+    // Cancel flag should be set
+    expect(managed.playCancelRequested).toBe(true);
+  });
+
+  it("should not crash when play promise resolves after disposal", async () => {
+    const clips = [createMockClip("clip-1", "media-1", 0, 10)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    pool.sync(clips, assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    const managed = Array.from((pool as any).videoCache.values())[0];
+    const element = managed.element;
+
+    // Setup element to pass all guards by overriding getters
+    Object.defineProperty(element, "paused", { get: () => true, configurable: true });
+    Object.defineProperty(element, "readyState", { get: () => 4, configurable: true });
+    managed.isActive = true; // Active
+    managed.playPromiseInFlight = false; // No promise in flight
+    managed.autoplayBlocked = false; // Not blocked
+
+    // Create a play promise that resolves after disposal
+    let resolvePlay: () => void;
+    const playPromise = new Promise<void>((resolve) => {
+      resolvePlay = resolve;
+    });
+
+    // Mock play to return our controlled promise
+    element.play = () => playPromise as any;
+
+    // Trigger requestPlayback (which calls play())
+    (pool as any).requestPlayback(managed, clips[0], { time: 2.5, state: "playing", speed: 1.0, muted: false, volume: 100 }, tracks, true);
+
+    // Verify play promise is in flight
+    expect(managed.playPromiseInFlight).toBe(true);
+
+    // Dispose the pool while promise is pending
+    pool.dispose();
+    expect(managed.disposing).toBe(true);
+
+    // Resolve the play promise AFTER disposal
+    resolvePlay!();
+    await playPromise;
+
+    // Should not crash - disposing flag prevents handler from running
+    // Test passes if no errors thrown
+  });
+
+  it("should ignore play promise rejection after disposal", async () => {
+    const clips = [createMockClip("clip-1", "media-1", 0, 10)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    pool.sync(clips, assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    const managed = Array.from((pool as any).videoCache.values())[0];
+    const element = managed.element;
+
+    // Setup element to pass all guards by overriding getters
+    Object.defineProperty(element, "paused", { get: () => true, configurable: true });
+    Object.defineProperty(element, "readyState", { get: () => 4, configurable: true });
+    managed.isActive = true; // Active
+    managed.playPromiseInFlight = false; // No promise in flight
+    managed.autoplayBlocked = false; // Not blocked
+
+    // Create a play promise that rejects after disposal
+    let rejectPlay: (err: Error) => void;
+    const playPromise = new Promise<void>((_, reject) => {
+      rejectPlay = reject;
+    });
+
+    element.play = () => playPromise as any;
+
+    // Trigger requestPlayback
+    (pool as any).requestPlayback(managed, clips[0], { time: 2.5, state: "playing", speed: 1.0, muted: false, volume: 100 }, tracks, true);
+
+    expect(managed.playPromiseInFlight).toBe(true);
+
+    // Dispose while promise pending
+    pool.dispose();
+    expect(managed.disposing).toBe(true);
+
+    // Reject the promise AFTER disposal
+    rejectPlay!(new Error("NotAllowedError"));
+
+    try {
+      await playPromise;
+    } catch {
+      // Expected to reject
+    }
+
+    // Should not crash - disposing flag prevents handler from running
+  });
+
+  it("should handle rapid disposal during playback", () => {
+    // Simulate rapid project switch (common trigger)
+    const clips = [createMockClip("clip-1", "media-1", 0, 10)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    pool.sync(clips, assets, tracks, {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    // Verify element exists
+    expect((pool as any).videoCache.size).toBe(1);
+
+    // Rapid disposal (like switching projects)
+    pool.dispose();
+
+    // Should not throw errors
+    expect((pool as any)._isDisposed).toBe(true);
+  });
+});

@@ -776,7 +776,15 @@ export class PreviewMediaPool {
   }
 
   private disposeVideo(key: string, managed: ManagedVideo): void {
+    // FINDING-020: Set disposing flag BEFORE any async operations
+    // This prevents play() promise handlers from accessing disposed element
     managed.disposing = true;
+
+    // FINDING-020: Cancel any pending play promise
+    if (managed.playPromiseInFlight) {
+      managed.playCancelRequested = true;
+    }
+
     if (managed.rvfcHandle !== null && this.hasRVFC) {
       try {
         managed.element.cancelVideoFrameCallback(managed.rvfcHandle);
@@ -986,6 +994,11 @@ export class PreviewMediaPool {
         .then(() => {
           managed.playPromiseInFlight = false;
 
+          // FINDING-020: Check if element is being disposed
+          if (managed.disposing) {
+            return; // Element disposed, ignore promise resolution
+          }
+
           // FINDING-016 FIX: Check if play was cancelled while promise was pending
           if (managed.playCancelRequested) {
             managed.playCancelRequested = false;
@@ -1012,6 +1025,11 @@ export class PreviewMediaPool {
         })
         .catch((err: Error) => {
           managed.playPromiseInFlight = false;
+
+          // FINDING-020: Check if element is being disposed
+          if (managed.disposing) {
+            return; // Element disposed, ignore promise rejection
+          }
 
           if (err.name !== "AbortError") {
             managed.lastPlayFailure = { error: err.name, timestamp: now };
