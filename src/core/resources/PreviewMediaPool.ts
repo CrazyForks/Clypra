@@ -68,8 +68,6 @@ interface ManagedVideo {
   lastUsedAt: number;
   /** Whether element is currently active in render window */
   isActive: boolean;
-  /** Playback state machine */
-  playbackState: "idle" | "playing" | "paused" | "blocked";
   /** Grace period - don't mark as orphaned if recently created */
   registrationGraceUntil: number;
 }
@@ -360,7 +358,6 @@ export class PreviewMediaPool {
             }
             managed.rvfcHandle = null;
           }
-          managed.playbackState = "idle";
         }
       }
 
@@ -378,7 +375,6 @@ export class PreviewMediaPool {
         // If element is in timeline but NOT currently active, pause it
         if (isInTimeline && !isActive && !managed.element.paused) {
           managed.element.pause();
-          managed.playbackState = "idle";
           if (managed.rvfcHandle !== null && this.hasRVFC) {
             try {
               managed.element.cancelVideoFrameCallback(managed.rvfcHandle);
@@ -405,7 +401,6 @@ export class PreviewMediaPool {
         if (!isInTimeline && !isInGracePeriod && !isInTransitionGrace) {
           if (!managed.element.paused) {
             managed.element.pause();
-            managed.playbackState = "idle";
           }
           if (managed.rvfcHandle !== null && this.hasRVFC) {
             try {
@@ -546,7 +541,6 @@ export class PreviewMediaPool {
         managed.rvfcHandle = null;
       }
       managed.element.pause();
-      managed.playbackState = "paused";
     }
 
     for (const managed of this.audios.values()) {
@@ -600,7 +594,6 @@ export class PreviewMediaPool {
     for (const managed of this.videoCache.values()) {
       // Clear autoplay block on user gesture
       managed.autoplayBlocked = false;
-      managed.playbackState = "idle";
 
       const video = managed.element;
       const wasMuted = video.muted;
@@ -675,7 +668,6 @@ export class PreviewMediaPool {
       // ─── NEW ARCHITECTURE ───────────────────────────────────────────────
       lastUsedAt: performance.now(),
       isActive: false,
-      playbackState: "idle",
       // Grace period: don't mark as orphaned for 5 seconds after creation
       // This allows time for the clip to be seen by sync() and registered
       registrationGraceUntil: performance.now() + 5000,
@@ -865,7 +857,6 @@ export class PreviewMediaPool {
     } else {
       if (!video.paused) {
         video.pause();
-        managed.playbackState = "paused";
       }
       if (managed.rvfcHandle !== null) {
         try {
@@ -889,8 +880,6 @@ export class PreviewMediaPool {
 
     // Guard 1: Already playing → no-op
     if (!video.paused) {
-      managed.playbackState = "playing";
-
       // Register RVFC for frame-accurate sync
       if (this.hasRVFC && managed.rvfcHandle === null) {
         this.registerRVFC(managed, clip, syncState, tracks, isPrimaryAudibleVideo);
@@ -906,7 +895,6 @@ export class PreviewMediaPool {
     // Guard 3: Session-level autoplay block → latch until user gesture
     if (this.sessionAutoplayBlocked) {
       console.warn(`[PreviewMediaPool] Session autoplay blocked - waiting for user gesture`);
-      managed.playbackState = "blocked";
       return;
     }
 
@@ -917,7 +905,6 @@ export class PreviewMediaPool {
       if (now - this.lastUserGestureTime < 1000) {
         managed.autoplayBlocked = false;
       } else {
-        managed.playbackState = "blocked";
         return;
       }
     }
@@ -951,7 +938,6 @@ export class PreviewMediaPool {
         .then(() => {
           managed.playPromiseInFlight = false;
           managed.lastPlayFailure = null;
-          managed.playbackState = "playing";
 
           // Register RVFC on successful play
           if (this.hasRVFC && managed.rvfcHandle === null) {
@@ -978,7 +964,6 @@ export class PreviewMediaPool {
             // NotAllowedError → latch element AND session
             if (err.name === "NotAllowedError") {
               managed.autoplayBlocked = true;
-              managed.playbackState = "blocked";
               this.sessionAutoplayBlocked = true;
 
               console.error(`[PreviewMediaPool] play() BLOCKED (NotAllowedError) - latched until user gesture:`, {
@@ -1314,10 +1299,12 @@ export class PreviewMediaPool {
     // Show per-element stats
     const perElement = new Map<string, { attempts: number; blocked: boolean; state: string; active: boolean }>();
     for (const [key, managed] of this.videoCache) {
+      // Derive state from element.paused and flags (single source of truth)
+      const state = managed.autoplayBlocked ? "blocked" : managed.element.paused ? "paused" : "playing";
       perElement.set(key, {
         attempts: managed.playAttempts,
         blocked: managed.autoplayBlocked,
-        state: managed.playbackState,
+        state,
         active: managed.isActive,
       });
     }
