@@ -147,6 +147,10 @@ export class PreviewMediaPool {
   // CRITICAL: Timeline clip registry - tracks ALL clips in timeline (not just active ones)
   // This prevents evicting elements for clips that still exist but are temporarily inactive
   private timelineClipRegistry = new Map<string, string>(); // clipId -> cacheKey
+  // TRANSITION SAFETY: Track recently removed clips to keep their elements available during transitions
+  // Format: cacheKey -> timestamp when removed
+  private recentlyRemovedClips = new Map<string, number>();
+  private readonly TRANSITION_GRACE_PERIOD_MS = 500; // Keep elements for 500ms after removal
 
   private audios = new Map<string, ManagedAudio>();
   private lastSyncState: PreviewSyncState | null = null;
@@ -249,7 +253,13 @@ export class PreviewMediaPool {
 
     // If full sync with removals, clear and rebuild registry
     if (isFullSync && structuralChange.removed.length > 0) {
+      const now = performance.now();
       for (const removedClipId of structuralChange.removed) {
+        const cacheKey = this.timelineClipRegistry.get(removedClipId);
+        if (cacheKey) {
+          // Mark as recently removed with timestamp (for transition grace period)
+          this.recentlyRemovedClips.set(cacheKey, now);
+        }
         this.timelineClipRegistry.delete(removedClipId);
       }
     }
@@ -402,9 +412,12 @@ export class PreviewMediaPool {
     for (const [cacheKey, managed] of this.videoCache) {
       const isInGracePeriod = now < managed.registrationGraceUntil;
       const isInTimeline = timelineCacheKeys.has(cacheKey);
+      const isRecentlyRemoved = this.recentlyRemovedClips.has(cacheKey);
+      const recentRemovalTime = this.recentlyRemovedClips.get(cacheKey);
+      const isInTransitionGrace = isRecentlyRemoved && recentRemovalTime && now - recentRemovalTime < this.TRANSITION_GRACE_PERIOD_MS;
 
-      // Only mark as orphaned if NOT in timeline AND past grace period
-      if (!isInTimeline && !isInGracePeriod) {
+      // Only mark as orphaned if NOT in timeline AND NOT in transition grace AND past registration grace
+      if (!isInTimeline && !isInGracePeriod && !isInTransitionGrace) {
         if (!managed.element.paused) {
           console.log(`[PreviewMediaPool] Pausing truly orphaned element (not in timeline, grace expired): ${cacheKey}`);
           managed.element.pause();
@@ -420,7 +433,16 @@ export class PreviewMediaPool {
         }
       } else if (isInTimeline) {
         // Element is in timeline - extend grace period (it's proven to be valid)
+        // Also remove from recently removed list since it's back in the timeline
+        this.recentlyRemovedClips.delete(cacheKey);
         managed.registrationGraceUntil = now + 10000; // Keep grace for 10 more seconds
+      }
+    }
+
+    // Clean up expired recently removed entries (older than grace period)
+    for (const [cacheKey, removalTime] of Array.from(this.recentlyRemovedClips.entries())) {
+      if (now - removalTime > this.TRANSITION_GRACE_PERIOD_MS) {
+        this.recentlyRemovedClips.delete(cacheKey);
       }
     }
 
@@ -461,6 +483,7 @@ export class PreviewMediaPool {
    * Get video elements for scheduler rasterization bypass.
    * Returns ALL timeline clip elements (not just currently active ones) so scheduler
    * can query readyState and render transitions between clips.
+   * Also includes recently removed clips during transition grace period.
    */
   getVideoElements(): Map<string, HTMLVideoElement> {
     const result = new Map<string, HTMLVideoElement>();
@@ -474,6 +497,20 @@ export class PreviewMediaPool {
         // Use legacy key format: ${clipId}-${mediaId}
         const legacyKey = `${clipId}-${managed.mediaId}`;
         result.set(legacyKey, managed.element);
+      }
+    }
+
+    // TRANSITION SAFETY: Also include recently removed clips (within grace period)
+    // This ensures rasterizer can access outgoing clip frames during transitions
+    const now = performance.now();
+    for (const [cacheKey, removalTime] of this.recentlyRemovedClips) {
+      if (now - removalTime < this.TRANSITION_GRACE_PERIOD_MS) {
+        const managed = this.videoCache.get(cacheKey);
+        if (managed) {
+          // Use legacy key format: ${clipId}-${mediaId}
+          const legacyKey = `${managed.clipId}-${managed.mediaId}`;
+          result.set(legacyKey, managed.element);
+        }
       }
     }
 
@@ -531,6 +568,7 @@ export class PreviewMediaPool {
     this.videoCache.clear();
     this.activeClipBindings.clear();
     this.timelineClipRegistry.clear();
+    this.recentlyRemovedClips.clear();
 
     for (const [key, managed] of this.audios) {
       this.disposeAudio(key, managed);

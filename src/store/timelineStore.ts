@@ -585,7 +585,7 @@ export const useTimelineStore = create<TimelineStore>(
         fromItemId: left.id,
         toItemId: right.id,
         alignment: "center",
-        easing: "easeInOut",
+        easing: "ease-in-out",
         placement: {
           trackId: left.trackId,
           startTime: transitionStart,
