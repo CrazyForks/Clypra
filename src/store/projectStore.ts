@@ -352,7 +352,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           const videoAssets = (payload?.mediaAssets ?? []).filter((a) => a.type === "video");
           if (videoAssets.length > 0) {
             const videoPaths = videoAssets.map((a) => a.path);
+            // ✅ FIX (RACE-002): Capture project ID before the async call. Validate it in the
+            // .then() callback so that if the user switches projects during the Rust decode
+            // operation the stale result is discarded instead of polluting the decoder pool.
+            const projectIdAtPrewarm = project.id;
             prewarmDecoders(videoPaths).then((count) => {
+              const currentProject = get().project;
+              if (!currentProject || currentProject.id !== projectIdAtPrewarm) {
+                console.log(`[PREWARM] Project switched during prewarming, result discarded (was: ${projectIdAtPrewarm})`);
+                return;
+              }
               console.log(`  ✅ Prewarmed ${count}/${videoPaths.length} video decoders`);
             });
           }
