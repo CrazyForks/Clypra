@@ -28,7 +28,7 @@
  * - LRU eviction based on time/memory, not activity window
  */
 
-import type { Clip, MediaAsset } from "@/types";
+import type { Clip, MediaAsset, TransitionTimelineItem } from "@/types";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { resolveClipSourceTime } from "../timeline/sourceTime";
 import { performanceMonitor } from "@/lib/monitoring/PerformanceMonitor";
@@ -88,6 +88,11 @@ interface ManagedAudio {
   mediaId: string;
   sourcePath: string;
   ready: boolean;
+  playPromiseInFlight?: boolean;
+  playCancelRequested?: boolean;
+  autoplayBlocked?: boolean;
+  playAttempts?: number;
+  lastPlayAttemptMs?: number;
 }
 
 /**
@@ -129,14 +134,23 @@ function findPrimaryVideoClip(videoClips: Clip[], tracks: Array<{ id: string; ty
  * - 30fps: 1.5 frames = 50ms tolerance
  * - 60fps: 1.5 frames = 25ms tolerance
  */
-function getClipSourceTime(clip: Clip, clockTime: number, frameRate: number): number | null {
+function getClipSourceTime(clip: Clip, clockTime: number, frameRate: number, transitions: TransitionTimelineItem[] = []): number | null {
   const clipLocalTime = clockTime - clip.startTime;
 
   // FINDING-005: Frame-rate-aware boundary tolerance (1.5 frames)
   const BOUNDARY_TOLERANCE = 1.5 / frameRate; // seconds
 
-  if (clipLocalTime < -BOUNDARY_TOLERANCE || clipLocalTime > clip.duration + BOUNDARY_TOLERANCE) {
-    return null; // Clip not active
+  const isInTransition = transitions.some((t) => {
+    const start = t.placement.startTime;
+    const duration = t.placement.duration;
+    const isActive = clockTime >= start && clockTime < start + duration;
+    return isActive && (t.fromItemId === clip.id || t.toItemId === clip.id);
+  });
+
+  if (!isInTransition) {
+    if (clipLocalTime < -BOUNDARY_TOLERANCE || clipLocalTime > clip.duration + BOUNDARY_TOLERANCE) {
+      return null; // Clip not active
+    }
   }
 
   // ✅ Use canonical source time calculation with clamping
@@ -358,6 +372,8 @@ export class PreviewMediaPool {
         }
       }
 
+      const activeTransitions = useTimelineStore.getState().transitions;
+
       for (const clip of clips) {
         const asset = assets.find((a) => a.id === clip.mediaId);
         const track = this.trackMap.get(clip.trackId);
@@ -366,14 +382,9 @@ export class PreviewMediaPool {
         if (asset?.type === "video") {
           const sourcePath = asset.path.startsWith("asset://") ? asset.path : convertFileSrc(asset.path);
 
-          // Cache key strategy: For split clips that share media, we need separate elements
-          // to prevent rebinding conflicts during overlap. Use trimIn to differentiate.
-          // FINDING-013: Normalize trimIn to prevent floating-point rounding differences
-          const trimIn = clip.trimIn || 0;
-          const normalizedTrimIn = Math.round(trimIn * 1000) / 1000;
-          const cacheKey = `${clip.mediaId}-${sourcePath}-trim${normalizedTrimIn.toFixed(3)}`;
+          const cacheKey = clip.id;
 
-          const sourceTime = getClipSourceTime(clip, syncState.time, syncState.frameRate);
+          const sourceTime = getClipSourceTime(clip, syncState.time, syncState.frameRate, activeTransitions);
           const isActive = sourceTime !== null; // Is clip in active playback window?
 
           desiredVideoBindings.set(clip.id, { cacheKey, clip, asset, isActive });
@@ -389,11 +400,7 @@ export class PreviewMediaPool {
             existingRemoval.clipIds.push(clip.id);
           }
         } else if (asset?.type === "audio" || (clip.kind === "audio" && (clip as any).audioPath)) {
-          const rawPath = asset ? asset.path : (clip as any).audioPath;
-          const sourcePath = rawPath.startsWith("asset://") ? rawPath : convertFileSrc(rawPath);
-          const trimIn = clip.trimIn || 0;
-          const normalizedTrimIn = Math.round(trimIn * 1000) / 1000;
-          const key = `${clip.mediaId}-${sourcePath}-trim${normalizedTrimIn.toFixed(3)}`;
+          const key = clip.id;
           desiredAudioKeys.add(key);
         }
       }
@@ -436,7 +443,7 @@ export class PreviewMediaPool {
             if (!a || a.type !== "video") return false;
             const t = this.trackMap.get(c.trackId);
             if (t?.visible === false) return false;
-            return getClipSourceTime(c, syncState.time, syncState.frameRate) !== null;
+            return getClipSourceTime(c, syncState.time, syncState.frameRate, activeTransitions) !== null;
           });
           const primaryVideoClip = findPrimaryVideoClip(activeVisibleVideoClips, tracks);
           const isPrimaryAudibleVideo = primaryVideoClip?.id === clip.id;
@@ -639,7 +646,7 @@ export class PreviewMediaPool {
       const trimIn = clip.trimIn || 0;
       const normalizedTrimIn = Math.round(trimIn * 1000) / 1000;
       const sourcePath = asset.path.startsWith("asset://") ? asset.path : convertFileSrc(asset.path);
-      const cacheKey = `${clip.mediaId}-${sourcePath}-trim${normalizedTrimIn.toFixed(3)}`;
+      const cacheKey = clip.id;
 
       if (this.videoCache.has(cacheKey)) {
         continue;
@@ -1318,10 +1325,7 @@ export class PreviewMediaPool {
         if (track?.visible === false || !asset || asset.type !== "video") {
           continue;
         }
-        const trimIn = clip.trimIn || 0;
-        const normalizedTrimIn = Math.round(trimIn * 1000) / 1000;
-        const sourcePath = asset.path.startsWith("asset://") ? asset.path : convertFileSrc(asset.path);
-        const cacheKey = `${clip.mediaId}-${sourcePath}-trim${normalizedTrimIn.toFixed(3)}`;
+        const cacheKey = clip.id;
         upcomingCacheKeys.add(cacheKey);
       }
     }
@@ -1443,6 +1447,7 @@ export class PreviewMediaPool {
     const generation = managed.rvfcGeneration;
 
     // Capture only minimal data needed for callback
+    const clipId = clip.id;
     const mediaId = managed.mediaId;
     const sourcePath = managed.sourcePath;
     const clipStartTime = clip.startTime;
@@ -1456,9 +1461,7 @@ export class PreviewMediaPool {
       if (this._isDisposed) return;
 
       // Check if element still exists in cache (by cache key)
-      const normalizedTrimIn = Math.round(trimIn * 1000) / 1000;
-      const cacheKey = `${mediaId}-${sourcePath}-trim${normalizedTrimIn.toFixed(3)}`;
-      if (!this.videoCache.has(cacheKey)) return;
+      if (!this.videoCache.has(clipId)) return;
 
       // Recalculate expected source time based on latest clock state
       const latestSyncState = this.lastSyncState ?? syncState;
@@ -1603,9 +1606,69 @@ export class PreviewMediaPool {
     this.audios.delete(key);
   }
 
+  private pauseAudio(managed: ManagedAudio): void {
+    if (managed.playPromiseInFlight) {
+      managed.playCancelRequested = true;
+    }
+    if (!managed.element.paused) {
+      managed.element.pause();
+    }
+  }
+
+  private requestAudioPlayback(managed: ManagedAudio, syncState: PreviewSyncState): void {
+    const audio = managed.element;
+
+    if (!audio.paused) return;
+    if (audio.readyState < 3) return;
+    if (this.sessionAutoplayBlocked) return;
+    if (managed.autoplayBlocked) {
+      const hasUserActivation = typeof navigator !== "undefined" && navigator.userActivation && navigator.userActivation.isActive;
+      if (hasUserActivation) {
+        managed.autoplayBlocked = false;
+      } else {
+        return;
+      }
+    }
+    if (managed.playPromiseInFlight) return;
+    const now = performance.now();
+    if (now - (managed.lastPlayAttemptMs || 0) < 100) return;
+
+    managed.playAttempts = (managed.playAttempts || 0) + 1;
+    managed.lastPlayAttemptMs = now;
+    managed.playPromiseInFlight = true;
+    managed.playCancelRequested = false;
+
+    const promise = audio.play();
+    if (promise !== undefined) {
+      promise
+        .then(() => {
+          managed.playPromiseInFlight = false;
+          if (this._isDisposed) return;
+          if (managed.playCancelRequested) {
+            managed.playCancelRequested = false;
+            audio.pause();
+          }
+        })
+        .catch((err: Error) => {
+          managed.playPromiseInFlight = false;
+          if (this._isDisposed) return;
+          if (err.name !== "AbortError") {
+            if (err.name === "NotAllowedError") {
+              managed.autoplayBlocked = true;
+              this.sessionAutoplayBlocked = true;
+              console.error(`[PreviewMediaPool] Audio play() BLOCKED (NotAllowedError) - latched until user gesture`);
+            } else {
+              console.warn(`[PreviewMediaPool] Audio play() failed for ${managed.clipId}-${managed.mediaId}:`, err);
+            }
+          }
+        });
+    }
+  }
+
   private updateAudioElement(managed: ManagedAudio, clip: Clip, syncState: PreviewSyncState, isTrackMuted: boolean): void {
     const audio = managed.element;
-    const sourceTime = getClipSourceTime(clip, syncState.time, syncState.frameRate);
+    const activeTransitions = useTimelineStore.getState().transitions;
+    const sourceTime = getClipSourceTime(clip, syncState.time, syncState.frameRate, activeTransitions);
 
     // Combine global preview volume with per-clip volume
     const clipVolume = clip.volume ?? 1.0; // Default to 1.0 if not set
@@ -1624,9 +1687,7 @@ export class PreviewMediaPool {
     }
 
     if (sourceTime === null) {
-      if (!audio.paused) {
-        audio.pause();
-      }
+      this.pauseAudio(managed);
       return;
     }
 
@@ -1644,20 +1705,9 @@ export class PreviewMediaPool {
     }
 
     if (syncState.state === "playing") {
-      if (audio.paused && audio.readyState >= 3) {
-        const promise = audio.play();
-        if (promise !== undefined) {
-          promise.catch((err: Error) => {
-            if (err.name !== "AbortError") {
-              console.warn(`[PreviewMediaPool] Audio play() failed for ${managed.clipId}-${managed.mediaId}:`, err);
-            }
-          });
-        }
-      }
+      this.requestAudioPlayback(managed, syncState);
     } else {
-      if (!audio.paused) {
-        audio.pause();
-      }
+      this.pauseAudio(managed);
     }
   }
 
