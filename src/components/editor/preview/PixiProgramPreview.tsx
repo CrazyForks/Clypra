@@ -342,14 +342,19 @@ export const PixiProgramPreview: React.FC = () => {
 
       if (needsSync && session && session.state === "active") {
         try {
-          session.syncPreviewMedia(getPreviewMediaSyncClips(state.clips, timeToRenderRounded), state.mediaAssets, state.tracks, {
-            time: timeToRenderRounded,
-            state: playbackState,
-            speed: state.clock.speed,
-            muted: isMutedRef.current,
-            volume: volumeRef.current,
-            frameRate,
-          });
+          session.syncPreviewMedia(
+            getPreviewMediaSyncClips(state.clips, timeToRenderRounded, state.transitions),
+            state.mediaAssets,
+            state.tracks,
+            {
+              time: timeToRenderRounded,
+              state: playbackState,
+              speed: state.clock.speed,
+              muted: isMutedRef.current,
+              volume: volumeRef.current,
+              frameRate,
+            }
+          );
           lastSyncedMediaHashRef.current = scene.metadata.activeMediaHash ?? "";
         } catch (error) {
           console.error(`[PixiProgramPreview] syncPreviewMedia error:`, error);
