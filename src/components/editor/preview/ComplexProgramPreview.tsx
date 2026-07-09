@@ -8,6 +8,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { isTauri as isTauriRuntime } from "@/core/platform/platform";
 import { getFrameScheduler } from "@/core/scheduler/FrameScheduler";
 import { getActiveSessionOrNull } from "@/core/runtime/ProjectSession";
+import { getTransformController } from "@/core/interactions";
 import { useViewportState } from "@/hooks/useViewportController";
 import { PreviewTransport } from "./PreviewTransport";
 import { TransformOverlayMemoized as TransformOverlay } from "../transform/TransformOverlay";
@@ -536,10 +537,10 @@ export const ComplexProgramPreview: React.FC = () => {
         }
       }
 
-      // PREV-BUG-001 fix: Include forceRenderNeeded in render decision.
-      // The clock subscriber sets this flag on seek, ensuring seeks within the
-      // same 10ms quantization bucket still trigger a re-render.
-      const needsRender = (isPlaying || timeChanged || epochChanged || isFirstFrame || forceRenderNeeded) && !waitingForVideoReady;
+      const transformController = getTransformController();
+      const hasActiveTransform = transformController.getActiveTransform() !== null;
+
+      const needsRender = (isPlaying || timeChanged || epochChanged || isFirstFrame || forceRenderNeeded || hasActiveTransform) && !waitingForVideoReady;
 
       // Consume the flag after checking (regardless of whether we render)
       if (forceRenderNeeded) forceRenderNeeded = false;
