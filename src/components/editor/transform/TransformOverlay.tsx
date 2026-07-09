@@ -1134,12 +1134,30 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
   const clipCenterX = selectedClip.x + selectedClip.width / 2;
   const clipCenterY = selectedClip.y + selectedClip.height / 2;
 
-  // Convert clip center to screen space
-  const clipCenterScreen = canvasToScreen(clipCenterX, clipCenterY, viewport, { width: canvasWidth, height: canvasHeight }, scale, zeroOffset);
+  // Resolve actual rendered dimensions (accounting for conform if present)
+  // For clips with conform (e.g., 16:9 video fitted into 9:16 canvas),
+  // the transform overlay should match the actual rendered bounds, not the clip's logical bounds
+  let actualWidth = selectedClip.width;
+  let actualHeight = selectedClip.height;
+  let actualX = selectedClip.x;
+  let actualY = selectedClip.y;
+
+  if (selectedClip.conform && selectedClip.conform.sourceWidth && selectedClip.conform.sourceHeight) {
+    const resolved = resolveConform(selectedClip.conform, canvasWidth, canvasHeight);
+    actualWidth = resolved.width;
+    actualHeight = resolved.height;
+    actualX = resolved.x;
+    actualY = resolved.y;
+  }
+
+  // Convert clip center to screen space (use actual rendered position)
+  const actualCenterX = actualX + actualWidth / 2;
+  const actualCenterY = actualY + actualHeight / 2;
+  const clipCenterScreen = canvasToScreen(actualCenterX, actualCenterY, viewport, { width: canvasWidth, height: canvasHeight }, scale, zeroOffset);
 
   // Calculate screen-space dimensions (accounting for scale and zoom)
-  const handleDisplayWidth = selectedClip.width * scale * viewport.zoom;
-  const handleDisplayHeight = selectedClip.height * scale * viewport.zoom;
+  const handleDisplayWidth = actualWidth * scale * viewport.zoom;
+  const handleDisplayHeight = actualHeight * scale * viewport.zoom;
 
   // Position transform box centered at the clip center, rotation applied via CSS transform
   const handleDisplayX = clipCenterScreen.x - handleDisplayWidth / 2;
