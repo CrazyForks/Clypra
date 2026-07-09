@@ -131,6 +131,9 @@ export interface EvaluatedMediaLayer extends BaseVisualLayer {
   /** Dimensions of the original source media file */
   readonly sourceWidth?: number;
   readonly sourceHeight?: number;
+
+  /** Combined transition-driven opacity fade contribution */
+  readonly transitionOpacity?: number;
 }
 
 /**
