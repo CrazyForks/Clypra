@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { getClipVisibleDuration, getClipEndTime, getTimelineContentEnd, getTimelineViewportEnd, normalizeClipTiming, createClipFromAsset, resolveClipDuration } from "../timeline/timelineClip";
+import { resolveDefaultFitModeForAsset } from "../timeline/placementPolicy";
 import type { Clip, MediaAsset } from "@/types";
 
 describe("timelineClip timing helpers", () => {
@@ -434,6 +435,8 @@ describe("timelineClip timing helpers", () => {
         stickerFormat: "lottie",
         stickerAnimationPath: "/path/to/sticker.json",
         stickerSourceId: "123",
+        width: 400,
+        height: 400,
       };
 
       const clip = createClipFromAsset({
@@ -442,6 +445,7 @@ describe("timelineClip timing helpers", () => {
         startTime: 5.0,
         width: 1920,
         height: 1080,
+        fitMode: resolveDefaultFitModeForAsset(asset),
       });
 
       expect(clip.kind).toBe("sticker");
@@ -451,6 +455,9 @@ describe("timelineClip timing helpers", () => {
       expect(clip.stickerFormat).toBe("lottie");
       expect(clip.stickerAnimationPath).toBe("/path/to/sticker.json");
       expect(clip.stickerSourceId).toBe("123");
+      expect(clip.conform).toBeUndefined();
+      expect(clip.width).toBe(400);
+      expect(clip.height).toBe(400);
     });
   });
 });
