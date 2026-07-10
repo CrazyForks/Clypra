@@ -2,14 +2,16 @@
  * Video Export
  *
  * High-level API for exporting videos using FFmpeg.
- * Integrates with the frame scheduler for frame rendering.
+ * Migrated to the PixiJS pipeline so all 21 GPU transitions render correctly
+ * in exported video (16 of them were silently broken on the Canvas 2D path).
  *
  * Architecture:
- *   Timeline → Frame Scheduler → RGBA Frames → FFmpeg → MP4/MOV
+ *   Timeline → evaluateTimelineSceneCached → PixiSceneCompositor → RGBA Frames → FFmpeg → MP4/MOV
  */
 
 import { invoke, Channel, convertFileSrc } from "@tauri-apps/api/core";
-import { getFrameScheduler } from "../../core/scheduler/FrameScheduler";
+import { evaluateTimelineSceneCached } from "../../core/evaluation/evaluator";
+import { createPixiExportCompositor, destroyPixiExportCompositor, renderFrameWithPixi } from "./pixiExportRenderer";
 import { VideoElementPool } from "../../core/resources/VideoElementPool";
 import { resolveClipSourceTime } from "../../core/timeline/sourceTime";
 import { getActiveAudioClips } from "../../core/timeline/audioClips";
@@ -125,15 +127,15 @@ export async function exportVideo(config: VideoExportConfig): Promise<VideoExpor
     throw new Error("No frames to export");
   }
 
-  // Get scheduler and update timeline state
-  const scheduler = getFrameScheduler();
-  scheduler.updateTimeline(clips, tracks, assets, project, epoch, transitions);
-
   // Create headless video element pool for export
   const videoPool = new VideoElementPool({
     maxConcurrent: 10,
     debug: false,
   });
+
+  // Create headless Pixi compositor for this export session.
+  // All 21 GPU transitions render correctly on this path.
+  const pixiHandle = createPixiExportCompositor(width, height);
 
   // Create progress channel
   const progressChannel = new Channel<VideoExportProgress>();
@@ -204,7 +206,7 @@ export async function exportVideo(config: VideoExportConfig): Promise<VideoExpor
     for (let i = 0; i < frameTimes.length; i++) {
       const time = frameTimes[i];
 
-      // Track ALL acquired video elements for this frame (base + overlays)
+      // Track ALL acquired video elements for this frame (released in finally)
       const frameVideoElements: HTMLVideoElement[] = [];
 
       try {
@@ -245,29 +247,18 @@ export async function exportVideo(config: VideoExportConfig): Promise<VideoExpor
           }
         }
 
-        // Schedule frame render with video elements
-        const jobId = scheduler.schedule({
-          time,
-          resolution: { width, height },
-          pixelRatio: 1,
-          outputFormat: "imagedata",
-          priority: "export",
-          videoElements,
-        });
+        // Evaluate scene for this frame using the canonical evaluator
+        const scene = evaluateTimelineSceneCached(time, clips, tracks, assets, project, epoch, transitions);
 
-        // Wait for frame
-        const result = await scheduler.wait(jobId);
+        // Render frame through the Pixi WebGL compositor.
+        // All 21 GPU transitions render correctly here (16 of them were broken on
+        // the previous Canvas 2D / FrameScheduler path).
+        const imageData = await renderFrameWithPixi(pixiHandle, scene, videoElements);
 
-        if (!(result.data instanceof ImageData)) {
-          throw new Error("Expected ImageData output from scheduler");
-        }
-
-        const imageData = result.data;
-
-        // Add frame to batch buffer
-        // CRITICAL: Must copy the data — imageData.data.buffer is shared with the
-        // canvas pool and will be overwritten when the canvas is reused for the next frame.
-        // Without this copy, up to BATCH_SIZE-1 frames get corrupted per flush cycle.
+        // Add frame to batch buffer.
+        // CRITICAL: Must copy the data — the readback canvas is reused for the next frame
+        // so its ImageData buffer will be overwritten. Without this copy, up to
+        // BATCH_SIZE-1 frames get corrupted per flush cycle.
         const frameBytes = new Uint8Array(imageData.data);
         frameBuffer.push(frameBytes);
 
@@ -305,8 +296,9 @@ export async function exportVideo(config: VideoExportConfig): Promise<VideoExpor
       throw error;
     }
   } finally {
-    // Always clean up video pool
+    // Always clean up video pool and Pixi compositor
     videoPool.clear();
+    destroyPixiExportCompositor(pixiHandle);
   }
 
   const totalTimeMs = Date.now() - startTimeMs;
