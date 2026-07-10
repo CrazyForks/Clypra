@@ -422,5 +422,35 @@ describe("timelineClip timing helpers", () => {
       expect(trimmed.duration).toBe(trimmed.trimOut - trimmed.trimIn);
       expect(trimmed.duration).toBe(6);
     });
+
+    it("creates a sticker clip with stickerImagePath, stickerFormat, and name set correctly", () => {
+      const asset: MediaAsset = {
+        id: "sticker-123",
+        name: "Joyful Laughing Face",
+        path: "/path/to/sticker.png",
+        type: "image",
+        duration: 3.0,
+        size: 0,
+        stickerFormat: "lottie",
+        stickerAnimationPath: "/path/to/sticker.json",
+        stickerSourceId: "123",
+      };
+
+      const clip = createClipFromAsset({
+        asset,
+        trackId: "track-1",
+        startTime: 5.0,
+        width: 1920,
+        height: 1080,
+      });
+
+      expect(clip.kind).toBe("sticker");
+      expect(clip.mediaId).toBe("sticker-123");
+      expect(clip.name).toBe("Joyful Laughing Face");
+      expect((clip as any).stickerImagePath).toBe("/path/to/sticker.png");
+      expect(clip.stickerFormat).toBe("lottie");
+      expect(clip.stickerAnimationPath).toBe("/path/to/sticker.json");
+      expect(clip.stickerSourceId).toBe("123");
+    });
   });
 });
