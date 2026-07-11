@@ -429,7 +429,11 @@ export const EditorLayout: React.FC<EditorLayoutProps> = ({ onRequestClose }) =>
         kind: "filter" as const,
         name: cachedFilter.filter.name || "Filter",
         intensity: defaultIntensity,
+        // Store complete filter metadata for data integrity
+        category: cachedFilter.filter.category,
+        url: cachedFilter.filter.url,
         pipeline: cachedFilter.filter.pipeline,
+        gradingParams: cachedFilter.filter.gradingParams,
         effectStack: cachedFilter.filter.effectStack,
       };
 
