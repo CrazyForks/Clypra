@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Check, Palette, SlidersHorizontal, Info, Paintbrush, RotateCcw, Copy, Download, Upload, HardDrive, Captions, RefreshCw, Keyboard } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { platform } from "@/core/platform";
 import { Modal } from "./Modal";
 import { useSettingsStore, Theme, FontFamily, THEME_META, FONT_META, getThemeColors, getBaseThemeForCustomization, getThemeColorKeys } from "@/store/settingsStore";
 import { useProjectStore } from "@/store/projectStore";
@@ -503,6 +503,20 @@ const XIcon = (props: React.SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+const openExternalUrl = async (url: string) => {
+  const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  if (isTauri) {
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(url);
+      return;
+    } catch (e) {
+      console.error("Tauri openUrl failed, falling back to window.open", e);
+    }
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+};
+
 // ─── About Tab ───────────────────────────────────────────────────────────
 function AboutTab() {
   const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "up-to-date" | "available" | "downloading" | "error">("idle");
@@ -664,11 +678,11 @@ function AboutTab() {
       </div>
 
       <div className="flex items-center gap-4 mt-2">
-        <button onClick={() => openUrl("https://github.com/AIEraDev/clypra")} className="text-xs font-medium text-text-muted hover:text-accent transition-colors flex items-center gap-1.5">
+        <button onClick={() => openExternalUrl("https://github.com/AIEraDev/clypra")} className="text-xs font-medium text-text-muted hover:text-accent transition-colors flex items-center gap-1.5">
           <GithubIcon className="w-3.5 h-3.5" />
           GitHub
         </button>
-        <button onClick={() => openUrl("https://x.com/AIEraDev")} className="text-xs font-medium text-text-muted hover:text-accent transition-colors flex items-center gap-1.5">
+        <button onClick={() => openExternalUrl("https://x.com/AIEraDev")} className="text-xs font-medium text-text-muted hover:text-accent transition-colors flex items-center gap-1.5">
           <XIcon className="w-3.5 h-3.5" />
           @AIEraDev
         </button>
@@ -689,12 +703,17 @@ function AboutTab() {
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [activeTab, setActiveTab] = useState<Tab>("appearance");
 
+  const visibleTabs = TABS.filter((tab) => {
+    if (platform.isCapacitor() && tab.id === "shortcuts") return false;
+    return true;
+  });
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Settings" size="lg">
       <div className="flex flex-col h-full md:flex-row overflow-hidden min-h-0">
         {/* Sidebar */}
         <aside className="w-full md:w-[160px] border-b md:border-b-0 md:border-r border-white/6 p-2 flex flex-row md:flex-col gap-1 overflow-x-auto md:overflow-x-visible md:overflow-y-auto scrollbar-thin shrink-0">
-          {TABS.map((tab) => {
+          {visibleTabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (
@@ -710,8 +729,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
         <main className="flex-1 p-5 overflow-y-auto scrollbar-thin min-w-0">
           {activeTab === "appearance" && <AppearanceTab />}
           {activeTab === "editor" && <EditorTab />}
-          {activeTab === "shortcuts" && <KeyboardShortcutsSettings />}
-          {activeTab === "captions" && <WhisperSettings />}
+          {activeTab === "shortcuts" && !platform.isCapacitor() && <KeyboardShortcutsSettings />}
+          {activeTab === "captions" && (
+            platform.isCapacitor() ? (
+              <div className="flex flex-col items-center justify-center p-8 text-center h-[300px]">
+                <Captions className="w-12 h-12 text-accent/60 mb-4" />
+                <h3 className="text-base font-semibold text-text-primary mb-2">Local Auto-Captions</h3>
+                <p className="text-xs text-text-muted max-w-[320px] leading-relaxed">
+                  Local speech-to-text model downloading and transcription are currently desktop-only features due to system resource requirements.
+                </p>
+              </div>
+            ) : (
+              <WhisperSettings />
+            )
+          )}
           {activeTab === "cache" && <CacheSettings />}
           {activeTab === "about" && <AboutTab />}
         </main>
