@@ -44,21 +44,59 @@ export const TextEffectsApi = {
 
   // 1. Fetch summaries for category tab picker UI
   async getEffectsIndex(): Promise<TextEffectSummary[]> {
-    const res = await fetch(`${BASE}/text-effects`, {
-      cache: "reload",
-      headers: getApiHeaders(),
-    });
-    if (!res.ok) throw new Error("Failed to load effects index");
-    return res.json();
+    try {
+      const res = await fetch(`${BASE}/text-effects`, {
+        cache: "reload",
+        headers: getApiHeaders(),
+      });
+
+      if (!res.ok) {
+        const errorText = await res.text().catch(() => res.statusText);
+        console.error(`[TextEffectsApi] Failed to load effects index:`, {
+          status: res.status,
+          statusText: res.statusText,
+          error: errorText,
+        });
+        throw new Error(`HTTP ${res.status}: ${errorText || res.statusText}`);
+      }
+
+      return res.json();
+    } catch (error) {
+      console.error(`[TextEffectsApi] Exception loading effects index:`, error);
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(`Network error: ${String(error)}`);
+    }
   },
 
   async getEffectsByCategory(category: string): Promise<TextEffectSummary[]> {
-    const res = await fetch(`${BASE}/text-effects/${category}`, {
-      cache: "reload",
-      headers: getApiHeaders(),
-    });
-    if (!res.ok) throw new Error(`Failed to load category manifest for: ${category}`);
-    return res.json();
+    try {
+      const res = await fetch(`${BASE}/text-effects/${category}`, {
+        cache: "reload",
+        headers: getApiHeaders(),
+      });
+
+      if (!res.ok) {
+        const errorText = await res.text().catch(() => res.statusText);
+        console.error(`[TextEffectsApi] Failed to load category ${category}:`, {
+          status: res.status,
+          statusText: res.statusText,
+          error: errorText,
+        });
+        throw new Error(`HTTP ${res.status}: ${errorText || res.statusText}`);
+      }
+
+      const data = await res.json();
+      console.log(`[TextEffectsApi] Successfully loaded ${data.length} effects for category: ${category}`);
+      return data;
+    } catch (error) {
+      console.error(`[TextEffectsApi] Exception loading category ${category}:`, error);
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(`Network error: ${String(error)}`);
+    }
   },
 
   // 2. LAZY-LOAD heavy configurations on selection with RAM caching

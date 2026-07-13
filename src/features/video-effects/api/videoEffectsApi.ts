@@ -26,32 +26,60 @@ export class VideoEffectsApi {
    * Fetch the video effects manifest with all available effects
    */
   static async getVideoEffectsManifest(): Promise<any> {
-    const res = await fetch(`${BASE}/video-effects/manifest`, {
-      cache: "reload",
-      headers: getApiHeaders(),
-    });
+    try {
+      const res = await fetch(`${BASE}/video-effects/manifest`, {
+        cache: "reload",
+        headers: getApiHeaders(),
+      });
 
-    if (!res.ok) {
-      throw new Error(`Failed to load video effects manifest: ${res.statusText}`);
+      if (!res.ok) {
+        const errorText = await res.text().catch(() => res.statusText);
+        console.error(`[VideoEffectsApi] Failed to fetch video effects manifest:`, {
+          status: res.status,
+          statusText: res.statusText,
+          error: errorText,
+        });
+        throw new Error(`HTTP ${res.status}: ${errorText || res.statusText}`);
+      }
+
+      return res.json();
+    } catch (error) {
+      console.error(`[VideoEffectsApi] Exception fetching video effects manifest:`, error);
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(`Network error: ${String(error)}`);
     }
-
-    return res.json();
   }
 
   /**
    * Fetch the body effects manifest with all available categories and counts
    */
   static async getBodyEffectsManifest(): Promise<any> {
-    const res = await fetch(`${BASE}/body-effects/manifest`, {
-      cache: "reload",
-      headers: getApiHeaders(),
-    });
+    try {
+      const res = await fetch(`${BASE}/body-effects/manifest`, {
+        cache: "reload",
+        headers: getApiHeaders(),
+      });
 
-    if (!res.ok) {
-      throw new Error(`Failed to load body effects manifest: ${res.statusText}`);
+      if (!res.ok) {
+        const errorText = await res.text().catch(() => res.statusText);
+        console.error(`[VideoEffectsApi] Failed to fetch body effects manifest:`, {
+          status: res.status,
+          statusText: res.statusText,
+          error: errorText,
+        });
+        throw new Error(`HTTP ${res.status}: ${errorText || res.statusText}`);
+      }
+
+      return res.json();
+    } catch (error) {
+      console.error(`[VideoEffectsApi] Exception fetching body effects manifest:`, error);
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(`Network error: ${String(error)}`);
     }
-
-    return res.json();
   }
 
   /**
@@ -74,16 +102,30 @@ export class VideoEffectsApi {
    * Fetch renderer-based effects by category
    */
   static async getRendererEffectsByCategory(category: string): Promise<EffectPreset[]> {
-    const res = await fetch(`${BASE}/video-effects/${category}`, {
-      cache: "reload",
-      headers: getApiHeaders(),
-    });
+    try {
+      const res = await fetch(`${BASE}/video-effects/${category}`, {
+        cache: "reload",
+        headers: getApiHeaders(),
+      });
 
-    if (!res.ok) {
-      throw new Error(`Failed to load ${category} effects: ${res.statusText}`);
+      if (!res.ok) {
+        const errorText = await res.text().catch(() => res.statusText);
+        console.error(`[VideoEffectsApi] Failed to fetch ${category} effects:`, {
+          status: res.status,
+          statusText: res.statusText,
+          error: errorText,
+        });
+        throw new Error(`HTTP ${res.status}: ${errorText || res.statusText}`);
+      }
+
+      return res.json();
+    } catch (error) {
+      console.error(`[VideoEffectsApi] Exception fetching ${category} effects:`, error);
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(`Network error: ${String(error)}`);
     }
-
-    return res.json();
   }
 
   /**
